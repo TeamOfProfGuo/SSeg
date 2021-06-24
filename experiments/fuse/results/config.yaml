@@ -1,0 +1,49 @@
+
+model: fuse
+backbone: vgg
+dataset:  nyud
+
+workers: 4         #'dataloader threads'
+base_size: 520     # 'base image size'
+crop_size: 480     #'crop image size'
+train_split: train #'dataset train split (default: train)'
+
+# training hyper params
+aux: False         #'Auxilary Loss'
+aux_weight: 0.2    #'Auxilary loss weight (default: 0.2)
+se_loss: False     #'Semantic Encoding Loss SE-loss'
+se_weight: 0.2     #'SE-loss weight (default: 0.2)'
+epochs: 400        #'number of epochs to train (default: auto)'
+start_epoch: 0     #'start epochs (default:0)'
+batch_size: 8      #'input batch size for training (default: auto)'
+test_batch_size: 8  #'input batch size for testing (default: same as batch size)'
+
+# optimizer params
+lr: 0.01           # learning rate (default: auto)
+lr_scheduler: poly #'learning rate scheduler (default: poly)'
+momentum: 0.9      #'momentum (default: 0.9)'
+weight_decay: 0.0001 # w-decay (default: 1e-4)'
+
+# cuda, seed and logging
+use_cuda: True  #'disables CUDA training'
+seed: 1        #'random seed (default: 1)'
+
+# checking point
+resume: None       #'put the path to resuming file if needed'
+checkname: default #'set the checkpoint name'
+model_zoo: None,   #'evaluating on model zoo model'
+# finetuning pre-trained models
+ft: False          #'finetuning on a different dataset'
+
+# evaluation option
+eval: False      #'evaluating mIoU'
+test_val: False  #'generate masks on val set'
+no_val: False    #'skip validation during training'
+
+# test option
+test_folder: None      #'path to test image folder'
+
+# multi grid dilation option
+multi_grid: False    #"use multi grid dilation policy"
+multi_dilation: None #"multi grid dilation list"
+os: 8                #'output stride default:8'
