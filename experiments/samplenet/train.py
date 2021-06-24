@@ -20,7 +20,7 @@ import torchvision.transforms as transform
 # from torch.nn.parallel.scatter_gather import gather
 
 # Default Work Dir: /gpfsnyu/scratch/[NetID]/DANet/
-BASE_DIR = os.path.dirname(os.path.dirname(os.getcwd()))
+BASE_DIR = os.getcwd()
 sys.path.append(BASE_DIR)
 # Path for config and summary files
 CONFIG_PATH = './experiments/samplenet/results/config.yaml'
@@ -69,6 +69,7 @@ class Trainer():
 
         # Choice of modules
         self.module_setting = {'n_features': 256, 'ef': args.early_fusion, 'crp': args.use_crp}
+        print(self.module_setting)
 
         # model and params
         model = get_segmentation_model(args.model, dataset=args.dataset, backbone=args.backbone, pretrained=True,
@@ -188,10 +189,10 @@ class Trainer():
         
         # Export weights if needed
         if self.args.export:
-            export_info = '%s_%s_%s' % (self.args.model, self.args.dataset, int(time.time()))
+            export_info = '/%s_%s_%s' % (self.args.model, self.args.dataset, int(time.time()))
             torch.save(best_state_dict, SMY_PATH + export_info + '.pth')
             with open(SMY_PATH + export_info + '.txt', 'w') as f:
-                f.write(str(self.module_setting))
+                f.write(str(self.module_setting) + '\n')
 
     def validation(self, epoch):
         # Fast test during the training

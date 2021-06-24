@@ -10,7 +10,7 @@
 #SBATCH --output=sample.out
 #SBATCH --error=sample.err
 #SBATCH --gres=gpu:4 # How much gpu need, n is the number
-#SBATCH -p aquila
+#SBATCH -p gpu
 #SBATCH --constraint=2080Ti
 
 echo "Your NetID is: $1"
@@ -21,7 +21,7 @@ module load anaconda3
 module load cuda/10.0
 module load gcc/7.3
 
-cd /gpfsnyu/scratch/$1/DANet/
+cd /gpfsnyu/scratch/$1/SSeg/
 
 # # Comment here if we've added cwd to sys.path
 # rm -r /gpfsnyu/home/$1/.conda/envs/$2/lib/python3.6/site-packages/encoding/
