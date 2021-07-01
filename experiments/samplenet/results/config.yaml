@@ -1,5 +1,5 @@
 
-model: refinenet
+model: rn_gap_fuse
 backbone: resnet18
 dataset: nyud
 

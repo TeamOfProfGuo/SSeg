@@ -19,14 +19,14 @@ from tensorboardX import SummaryWriter
 import torchvision.transforms as transform
 # from torch.nn.parallel.scatter_gather import gather
 
-# Default Work Dir: /gpfsnyu/scratch/[NetID]/DANet/
+# Default Work Dir: /gpfsnyu/scratch/[NetID]/SSeg/
 BASE_DIR = os.getcwd()
 sys.path.append(BASE_DIR)
 # Path for config and summary files
 CONFIG_PATH = './experiments/samplenet/results/config.yaml'
 SMY_PATH = os.path.dirname(CONFIG_PATH)
 # GPU ids
-GPUS = [0, 1, 2, 3]
+GPUS = [0, 1]
 
 import encoding.utils as utils
 from encoding.nn import SegmentationLosses #, SyncBatchNorm
@@ -163,6 +163,8 @@ class Trainer():
 
     def train_n_evaluate(self):
 
+        results = Dict({'miou': [], 'pix_acc': []})
+
         for epoch in range(self.args.epochs):
             # run on one epoch
             print("\n===============train epoch {}/{} ==========================\n".format(epoch+1, self.args.epochs))
@@ -174,6 +176,9 @@ class Trainer():
             print('\n===============start testing, training epoch {}\n'.format(epoch+1))
             pixAcc, mIOU, loss = self.validation(epoch)
             print('evaluation pixel acc {}, mean IOU {}, loss {}'.format(pixAcc, mIOU, loss))
+
+            results.miou.append(round(mIOU, 6))
+            results.pix_acc.append(round(mIOU, 6))
 
             # save the best model
             is_best = False
@@ -187,6 +192,10 @@ class Trainer():
                                    'optimizer': self.optimizer.state_dict(),
                                    'best_pred': self.best_pred}, self.args, is_best)
         
+        final_miou = sum(results.miou[-5:]) / 5
+        final_pix_acc = sum(results.pix_acc[-5:]) / 5
+        print('\nPerformance of last 5 epochs\n[mIoU]: %4f\n[Pixel_Acc]: %4f\n' % (final_miou, final_pix_acc))
+
         # Export weights if needed
         if self.args.export:
             export_info = '/%s_%s_%s' % (self.args.model, self.args.dataset, int(time.time()))

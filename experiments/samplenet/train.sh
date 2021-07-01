@@ -9,7 +9,7 @@
 #SBATCH --mail-user=hl3797@nyu.edu # put your email here if you want emails
 #SBATCH --output=sample.out
 #SBATCH --error=sample.err
-#SBATCH --gres=gpu:4 # How much gpu need, n is the number
+#SBATCH --gres=gpu:2 # How much gpu need, n is the number
 #SBATCH -p gpu
 #SBATCH --constraint=2080Ti
 
