@@ -19,6 +19,9 @@ class RN_rgbd_fuse(nn.Module):
         self.early_fusion = module_setting.ef if module_setting.ef is not None else False
         self.use_crp = module_setting.crp if module_setting.crp is not None else False
         n_features = module_setting.n_features if module_setting.n_features is not None else 256
+        rgbd_fuse = module_setting.rgbd_fuse if module_setting.rgbd_fuse is not None else 'add'
+        pre_module = module_setting.pre_module if module_setting.pre_module is not None else 'se'
+        
 
         self.rgb_base = get_resnet18(input_dim=4) if self.early_fusion else get_resnet18(input_dim=3)
         self.dep_base = get_resnet18(input_dim=1)
@@ -37,17 +40,15 @@ class RN_rgbd_fuse(nn.Module):
         self.dep_layer3 = self.dep_base.layer3  # [B, 256, h/16, w/16]
         self.dep_layer4 = self.dep_base.layer4  # [B, 512, h/32, w/32]
 
-        self.fuse1 = RGBD_Fuse_Block( 64, out_method='add', pre_module='context')
-        self.fuse2 = RGBD_Fuse_Block(128, out_method='add', pre_module='context')
-        self.fuse3 = RGBD_Fuse_Block(256, out_method='add', pre_module='context')
-        self.fuse4 = RGBD_Fuse_Block(512, out_method='add', pre_module='context')
+        self.fuse1 = RGBD_Fuse_Block( 64, out_method=rgbd_fuse, pre_module=pre_module)
+        self.fuse2 = RGBD_Fuse_Block(128, out_method=rgbd_fuse, pre_module=pre_module)
+        self.fuse3 = RGBD_Fuse_Block(256, out_method=rgbd_fuse, pre_module=pre_module)
+        self.fuse4 = RGBD_Fuse_Block(512, out_method=rgbd_fuse, pre_module=pre_module)
 
         self.refine_conv1 = nn.Conv2d( 64, n_features, kernel_size=3, stride=1, padding=1, bias=False)
         self.refine_conv2 = nn.Conv2d(128, n_features, kernel_size=3, stride=1, padding=1, bias=False)
         self.refine_conv3 = nn.Conv2d(256, n_features, kernel_size=3, stride=1, padding=1, bias=False)
         self.refine_conv4 = nn.Conv2d(512, 2*n_features, kernel_size=3, stride=1, padding=1, bias=False)
-
-        # self.danet = DANetHead(512, n_classes, nn.BatchNorm2d)
 
         self.refine4 = RefineNetBlock(2*n_features, self.use_crp, (2*n_features, 32))
         self.refine3 = RefineNetBlock(n_features, self.use_crp, (2*n_features, 32), (n_features, 16))
@@ -129,53 +130,6 @@ def get_resnet18(pretrained=True, input_dim = 3, f_path='./encoding/models/pretr
     
     return model
 
-# # Choices of MultiResolutionFusion Block
-# MRF_DICT = {'RefineNet': MultiResolutionFusion, 'Concat_5_2': MRF_Concat_5_2, 'Concat_6_2': MRF_Concat_6_2}
-
 class RefineNetBlock(BaseRefineNetBlock):
     def __init__(self, features, use_crp, *shapes):
         super().__init__(features, use_crp, ResidualConvUnit, MRF_Concat_5_2, nn.Identity, *shapes)
-
-# class DANetHead(nn.Module):
-#     def __init__(self, in_channels, out_channels, norm_layer):
-#         super(DANetHead, self).__init__()
-#         inter_channels = in_channels // 2
-#         self.conv5a = nn.Sequential(nn.Conv2d(in_channels, inter_channels, 3, padding=1, bias=False),
-#                                     norm_layer(inter_channels),
-#                                     nn.ReLU())
-
-#         self.conv5c = nn.Sequential(nn.Conv2d(in_channels, inter_channels, 3, padding=1, bias=False),
-#                                     norm_layer(inter_channels),
-#                                     nn.ReLU())
-
-#         self.sa = PAM_Module(inter_channels)
-#         self.sc = CAM_Module(inter_channels)
-#         self.conv51 = nn.Sequential(nn.Conv2d(inter_channels, inter_channels, 3, padding=1, bias=False),
-#                                     norm_layer(inter_channels),
-#                                     nn.ReLU())
-#         self.conv52 = nn.Sequential(nn.Conv2d(inter_channels, inter_channels, 3, padding=1, bias=False),
-#                                     norm_layer(inter_channels),
-#                                     nn.ReLU())
-
-#         self.conv6 = nn.Sequential(nn.Dropout2d(0.1, False), nn.Conv2d(inter_channels, out_channels, 1))
-#         self.conv7 = nn.Sequential(nn.Dropout2d(0.1, False), nn.Conv2d(inter_channels, out_channels, 1))
-
-#         self.conv8 = nn.Sequential(nn.Dropout2d(0.1, False), nn.Conv2d(inter_channels, out_channels, 1))
-
-#     def forward(self, x):
-#         feat1 = self.conv5a(x)
-#         sa_feat = self.sa(feat1)
-#         sa_conv = self.conv51(sa_feat)
-#         sa_output = self.conv6(sa_conv)
-
-#         feat2 = self.conv5c(x)
-#         sc_feat = self.sc(feat2)
-#         sc_conv = self.conv52(sc_feat)
-#         sc_output = self.conv7(sc_conv)
-
-#         feat_sum = sa_conv + sc_conv
-
-#         sasc_output = self.conv8(feat_sum)
-
-#         output = [sasc_output, sa_output, sc_output]
-#         return tuple(output)
