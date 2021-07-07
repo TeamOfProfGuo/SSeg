@@ -79,7 +79,7 @@ class GC_Block(nn.Module):
         context_mask = self.att_conv(x).view(b, 1, -1)                # [b, 1, h*w]
         context_mask = self.softmax(context_mask).unsqueeze(-1)       # [b, 1, h*w, 1]
         context = torch.matmul(x_in, context_mask).view(b, -1, 1, 1)  # [b, c, 1, 1]
-        out = x * self.channel_add_conv(context)
+        out = x + self.channel_add_conv(context)
         return out
 
 class SE_Block(nn.Module):

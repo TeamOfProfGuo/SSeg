@@ -48,10 +48,10 @@ class BaseNet(nn.Module):
         # self.fuse3 = Simple_RGBD_Fuse(256)
         # self.fuse4 = Simple_RGBD_Fuse(512)
 
-        # SPA Fuse
+        # RGB-D Fuse
         # out_method: add/concat
         # pre_module: se/pp/spa/context
-        # mode: early(concat => attention) / late(attention => concat/add)
+        # mode: early(concat => attention) / late(rgb/dep attention => concat/add)
         self.fuse0 = RGBD_Fuse_Block( 64, out_method=rgbd_fuse, pre_module=pre_module, mode=rgbd_mode)
         self.fuse1 = RGBD_Fuse_Block( 64, out_method=rgbd_fuse, pre_module=pre_module, mode=rgbd_mode)
         self.fuse2 = RGBD_Fuse_Block(128, out_method=rgbd_fuse, pre_module=pre_module, mode=rgbd_mode)
