@@ -19,9 +19,10 @@ from .munet import *
 from .lmfnet import *
 from .refinenet import *
 # from .rn_cat import *
-from .rn_gap_fuse import *
-from .rn_rgbd_fuse import *
+# from .rn_gap_fuse import *
+# from .rn_rgbd_fuse import *
 from .basenet import *
+# from .transunet import *
 
 def get_segmentation_model(name, **kwargs):
     models = {
@@ -49,8 +50,9 @@ def get_segmentation_model(name, **kwargs):
         'link_mfnet': get_LinkMFNet,
         'refinenet': get_refinenet,
         # 'rn_cat': get_rn_cat,
-        'rn_gap_fuse': get_rn_gap_fuse,
-        'rn_rgbd_fuse': get_rn_rgbd_fuse,
-        'basenet': get_basenet
+        #'rn_gap_fuse': get_rn_gap_fuse,
+        #'rn_rgbd_fuse': get_rn_rgbd_fuse,
+        'basenet': get_basenet,
+        # 'transunet': get_transunet
     }
     return models[name.lower()](**kwargs)

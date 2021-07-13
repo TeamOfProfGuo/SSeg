@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=bn_scse_ea
+#SBATCH --job-name=pca9_gau_rn
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=6
@@ -7,8 +7,8 @@
 #SBATCH --time=120:00:00
 #SBATCH --mail-type=END
 #SBATCH --mail-user=hl3797@nyu.edu # put your email here if you want emails
-#SBATCH --output=bn_scse_ea.out
-#SBATCH --error=bn_scse_ea.err
+#SBATCH --output=pca9_gau_rn.out
+#SBATCH --error=pca9_gau_rn.err
 #SBATCH --gres=gpu:2 # How much gpu need, n is the number
 #SBATCH -p gpu
 #SBATCH --constraint=2080Ti

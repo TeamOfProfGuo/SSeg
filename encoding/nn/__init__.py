@@ -21,3 +21,4 @@ from .da_att import *
 from .unet_att import *
 
 from .fuse import *
+from .decoder import *

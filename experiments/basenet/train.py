@@ -68,8 +68,8 @@ class Trainer():
         self.nclass = trainset.num_class
 
         # Choice of modules
-        self.module_setting = Dict({'n_features': 128, 'ef': args.early_fusion, 'decoder': 'base', 
-                                    'rgbd_fuse': 'add', 'pre_module': 'scse', 'rgbd_mode': 'early'})
+        self.module_setting = Dict({'n_features': 128, 'ef': args.early_fusion, 'decoder': 'refine', 
+                                    'rgbd_fuse': 'add', 'pre_module': 'pca', 'rgbd_mode': 'late'})
         print(self.module_setting)
 
         # model and params

@@ -3,33 +3,30 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from math import log
+__all__ = ['Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'PPE_Block', 'PPCE_Block']
 
-__all__ = ['ResidualConvUnit', 'SE_Block', 'MultiResolutionFusion',
-            'MRF_Concat_5_2', 'BaseRefineNetBlock', 'RGBD_Fuse_Block']
+RGBD_FUSE_LAMB = False
+PCA_FUSE_LAMB = False
 
-class ResidualConvUnit(nn.Module):
-    def __init__(self, features):
+class Simple_RGBD_Fuse(nn.Module):
+    def __init__(self, in_feats):
         super().__init__()
-
-        self.conv1 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True)
-        self.conv2 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=False)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        out = self.relu(x)
-        out = self.conv1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        return out + x
+        
+    def forward(self, x, d):
+        return x+d
 
 class RGBD_Fuse_Block(nn.Module):
     def __init__(self, in_feats, out_method='concat', pre_module='se', mode='late', pre_setting={}): # out_feats=None, 
         super().__init__()
-        module_dict = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 'eca': ECA_Block, 'scse': SCSE_Block}
+        module_dict = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 
+                       'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
+                       'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block}
         self.mode = mode
         self.module = module_dict[pre_module]
         self.out_method = out_method
+        self.use_lamb = RGBD_FUSE_LAMB
+        self.lamb = nn.Parameter(torch.zeros(1))
+        print('[RGB-D Fuse]: use_lamb =', self.use_lamb)
         if mode == 'late':
             self.rgb_pre = self.module(in_feats, **pre_setting)
             self.dep_pre = self.module(in_feats, **pre_setting)
@@ -46,7 +43,10 @@ class RGBD_Fuse_Block(nn.Module):
         if self.mode == 'late':
             rgb = self.rgb_pre(rgb)
             dep = self.dep_pre(dep)
-            return (rgb + dep) if self.out_method == 'add' else (self.out_block(torch.cat((rgb, dep), 1)))
+            if self.out_method == 'add':
+                return (1 - self.lamb) * rgb + self.lamb * dep if self.use_lamb else rgb + dep
+            else:
+                return self.out_block(torch.cat((rgb, dep), 1))
         elif self.mode == 'early':
             _, c, _, _ = rgb.size()
             feats = torch.cat((rgb, dep), dim=1)
@@ -54,40 +54,314 @@ class RGBD_Fuse_Block(nn.Module):
             if self.out_method == 'add':
                 rgb = feats[:, :c, :, :]
                 dep = feats[:, c:, :, :]
-                return rgb + dep
+                return (1 - self.lamb) * rgb + self.lamb * dep if self.use_lamb else rgb + dep
             else:
                 return self.out_block(feats)
         else:
             raise ValueError('Invalid Fuse Mode: ' + str(self.mode))
 
-class GC_Block(nn.Module):
-    def __init__(self, in_feats, mid_factor=4):
+
+class PP_Block(nn.Module):
+    def __init__(self, in_feats, pp_layer=3, reduction=16, mid_feats=32):
         super().__init__()
-        mid_feats = in_feats // mid_factor
-        self.softmax = nn.Softmax(dim=-1)
-        self.att_conv = nn.Conv2d(in_feats, 1, kernel_size=1)
-        self.channel_add_conv = nn.Sequential(
-            nn.Conv2d(in_feats, mid_feats, kernel_size=1),
-            nn.LayerNorm([mid_feats, 1, 1]),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid_feats, in_feats, kernel_size=1)
+        self.pp_layer = pp_layer            # l: pyramid layer num
+        self.pp_size = 2 ** (pp_layer-1)    # s: pyramid max-layer size
+        self.pp_des = self.pp_size ** 2     # d: pyramid max-layer feature num
+        self.pp_conv = nn.Conv2d(in_feats * pp_layer, in_feats, kernel_size=1, groups=in_feats)
+        self.fc_feats = self.pp_des * in_feats
+        self.fc = nn.Sequential(
+            # PP Var1
+            nn.Linear(self.fc_feats, in_feats, bias=False),
+
+            # # PP Var2
+            # nn.ReLU(inplace=True),
+            # nn.Linear(self.fc_feats, in_feats, bias=False),
+
+            # # PP Var3
+            # nn.Linear(self.fc_feats, self.fc_feats // reduction, bias=False),
+            # nn.ReLU(inplace=True),
+            # nn.Linear(self.fc_feats // reduction, in_feats, bias=False),
+
+            # # PP Var4
+            # nn.Linear(self.fc_feats, mid_feats, bias=False),
+            # nn.ReLU(inplace=True),
+            # nn.Linear(mid_feats, in_feats, bias=False),
+            
+            nn.Sigmoid()
         )
-    
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        l, s = self.pp_layer, self.pp_size
+        pooling_pyramid = []
+        for i in range(self.pp_layer):
+            pooling_pyramid.append(F.interpolate(F.adaptive_avg_pool2d(x, 2 ** i), size=self.pp_size))
+        y = torch.cat(tuple(pooling_pyramid), dim=-1)   # [b, c, s, sl]
+        y = y.permute(0, 1, 3, 2).reshape(b, c*l, s, s) # [b, c, sl, s] => [b, cl, s, s]
+        y = self.pp_conv(y).view(b, -1)                 # [b, c, s, s] => [b, cs^2]
+        weighting = self.fc(y).view(b, c, 1, 1)         # [b, c] => [b, c, 1, 1]
+        return weighting * x
+
+class PPC_Block(nn.Module):
+    def __init__(self, in_feats, pp_layer=3, mid_feats=32, reduction=8):
+        super().__init__()
+        self.pp_layer = pp_layer            # l: pyramid layer num
+        self.pp_size = 2 ** (pp_layer-1)    # s: pyramid max-layer size
+
+        # # Var 1
+        # self.cap_conv = nn.Conv2d(in_feats * pp_layer, in_feats, kernel_size=1)
+
+        # Var 2
+        self.mlp = nn.Sequential(
+            nn.Conv2d(in_feats * pp_layer, in_feats // reduction, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_feats // reduction, in_feats, kernel_size=1)
+        )
+
+        # # Var 3
+        # self.cap_conv = nn.Conv2d(in_feats * pp_layer, 1, kernel_size=1)
+
+        self.att_conv = nn.Conv2d(1, 1, kernel_size=self.pp_size)
+        
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        l, s = self.pp_layer, self.pp_size
+        pooling_pyramid = []
+        for i in range(self.pp_layer):
+            pooling_pyramid.append(F.interpolate(F.adaptive_avg_pool2d(x, 2 ** i), size=self.pp_size))
+        y = torch.cat(tuple(pooling_pyramid), dim=-1)          # [b, c, s, sl]
+        y = y.permute(0, 1, 3, 2).reshape(b, c*l, s, s)        # [b, c, sl, s] => [b, cl, s, s]
+        # y = y.permute(0, 2, 3, 1).reshape(b*s*s, c*l, 1, 1)  # [b, s, s, cl] => [bs^2, cl, 1, 1]
+        y = self.mlp(y).view(b*c, 1, s, s)                     # [b, c, s, s]  => [bc, 1, s, s]
+        w = torch.sigmoid(self.att_conv(y).view(b, c, 1, 1))   # [bc, 1, 1, 1] => [b, c, 1, 1]
+        return w * x
+
+class PDL_Block(nn.Module):
+    def __init__(self, in_feats, pp_layer=4, descriptor=8, reduction=16, mid_feats=16):
+        super().__init__()
+        self.layer_size = pp_layer                  # l: pyramid layer num
+        self.feats_size = (4 ** pp_layer - 1) // 3  # f: feats for descritor
+        self.descriptor = descriptor                # d: descriptor num (for one channel)
+        # print('[PDL]: l = %d, d = %d, r = %d.' % (pp_layer, descriptor, reduction))
+        print('[PDL]: l = %d, d = %d, m = %d.' % (pp_layer, descriptor, mid_feats))
+
+        self.des = nn.Conv2d(self.feats_size, descriptor, kernel_size=1)
+        # Var 1
+        self.mlp = nn.Sequential(
+            # descriptor * in_feats // reduction
+            # nn.Dropout(0.1, inplace=True),
+            nn.Linear(descriptor * in_feats, mid_feats, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_feats, in_feats),
+            nn.Sigmoid()
+        )
+
+        # # Var 2
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(descriptor * in_feats, in_feats, bias=False),
+        #     nn.Sigmoid()
+        # )
+        
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        l, f, d = self.layer_size, self.feats_size, self.descriptor
+        pooling_pyramid = []
+        for i in range(l):
+            pooling_pyramid.append(F.adaptive_avg_pool2d(x, 2 ** i).view(b, c, 1, -1))
+        y = torch.cat(tuple(pooling_pyramid), dim=-1)   # [b,  c, 1, f]
+        y = y.reshape(b*c, f, 1, 1)                     # [bc, f, 1, 1]
+        y = self.des(y).view(b, c*d)                    # [bc, d, 1, 1] => [b, cd, 1, 1]
+        w = self.mlp(y).view(b, c, 1, 1)                # [b,  c, 1, 1] => [b, c, 1, 1]
+        return w * x
+
+class PPE_Block(nn.Module):
+    def __init__(self, in_feats, pp_layer=3, mid_feats=16):
+        super().__init__()
+        self.pp_layer = pp_layer            # l: pyramid layer num
+        self.pp_size = 2 ** (pp_layer-1)    # s: pyramid max-layer size
+        self.pp_des = self.pp_size ** 2     # d: pyramid max-layer feature num
+
+        self.rgb_pp_conv = nn.Conv2d(in_feats * pp_layer, in_feats, kernel_size=1, groups=in_feats)
+        self.dep_pp_conv = nn.Conv2d(in_feats * pp_layer, in_feats, kernel_size=1, groups=in_feats)
+        self.fc_feats = 2 * self.pp_des * in_feats
+        self.fc = nn.Sequential(
+            # nn.Dropout(0.1, inplace=True),
+            # # PP Var1
+            # nn.Linear(self.fc_feats, 2 * in_feats, bias=False),
+            # # PP Var2
+            # nn.ReLU(inplace=True),
+            # nn.Linear(self.fc_feats, 2 * in_feats, bias=False),
+            # PP Var3
+            nn.Linear(self.fc_feats, mid_feats, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_feats, 2 * in_feats),
+            nn.Sigmoid()
+        )
+
+        self.pam = PSC_Block(in_feats)
+
+    def forward(self, rgb, dep):
+        b, c, _, _ = rgb.size()
+        l, s = self.pp_layer, self.pp_size
+        rgb_pp, dep_pp = [], []
+        for i in range(self.pp_layer):
+            rgb_pp.append(F.interpolate(F.adaptive_avg_pool2d(rgb, 2 ** i), size=self.pp_size))
+            dep_pp.append(F.interpolate(F.adaptive_avg_pool2d(dep, 2 ** i), size=self.pp_size))
+        rgb_y = torch.cat(tuple(rgb_pp), dim=-1)                                  # [b, c, s, sl]
+        dep_y = torch.cat(tuple(dep_pp), dim=-1)                                  # [b, c, s, sl]
+        rgb_y = rgb_y.permute(0, 1, 3, 2).reshape(b, c*l, s, s)                   # [b, c, sl, s] => [b, cl, s, s]
+        dep_y = dep_y.permute(0, 1, 3, 2).reshape(b, c*l, s, s)                   # [b, c, sl, s] => [b, cl, s, s]
+        rgb_y = self.rgb_pp_conv(rgb_y).view(b, -1)                               # [b, c, s, s] => [b, cs^2]
+        dep_y = self.rgb_pp_conv(dep_y).view(b, -1)                               # [b, c, s, s] => [b, cs^2]
+        weighting = self.fc(torch.cat((rgb_y, dep_y), dim=1)).view(b, 2*c, 1, 1)  # [b, 2c] => [b, 2c, 1, 1]
+        out = weighting * torch.cat((rgb, dep), dim=1)
+        # return out[:, :c, :, :] + out[:, c:, :, :]
+        y = out[:, :c, :, :] + out[:, c:, :, :]
+        return self.pam(y)
+
+class PPCE_Block(nn.Module):
+    def __init__(self, in_feats, pp_layer=3, mid_feats=32, reduction=16):
+        super().__init__()
+        self.pp_layer = pp_layer            # l: pyramid layer num
+        self.pp_size = 2 ** (pp_layer-1)    # s: pyramid max-layer size
+
+        # # Var 1
+        # self.cap_conv = nn.Conv2d(2 * in_feats * pp_layer, 2 * in_feats, kernel_size=1)
+
+        # Var 2
+        self.mlp = nn.Sequential(
+            nn.Conv2d(2 * in_feats * pp_layer, in_feats // reduction, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_feats // reduction, 2 * in_feats, kernel_size=1)
+        )
+
+        self.att_conv = nn.Conv2d(1, 1, kernel_size=self.pp_size)
+        
+    def forward(self, rgb, dep):
+        b, c, _, _ = rgb.size()
+        l, s = self.pp_layer, self.pp_size
+        rgb_pp, dep_pp = [], []
+        for i in range(self.pp_layer):
+            rgb_pp.append(F.interpolate(F.adaptive_avg_pool2d(rgb, 2 ** i), size=self.pp_size))
+            dep_pp.append(F.interpolate(F.adaptive_avg_pool2d(dep, 2 ** i), size=self.pp_size))
+        rgb_y = torch.cat(tuple(rgb_pp), dim=-1)            # [b, c, s, sl]
+        dep_y = torch.cat(tuple(dep_pp), dim=-1)            # [b, c, s, sl]
+        y = torch.cat((rgb_y, dep_y), dim=-1)               # [b, c, s, 2sl]
+        y = y.permute(0, 1, 3, 2).reshape(b, 2*c*l, s, s)   # [b, c, 2sl, s] => [b, 2cl, s, s]
+        # # Var 1
+        # y = self.cap_conv(y).view(2*b*c, 1, s, s)                  # [b, 2c, s, s]  => [2bc, 1, s, s]
+        # Var 2
+        y = self.mlp(y).view(2*b*c, 1, s, s)                       # [b, 2c, s, s]  => [2bc, 1, s, s]
+        w = torch.sigmoid(self.att_conv(y).view(b, 2*c, 1, 1))     # [2bc, 1, 1, 1] => [b, 2c, 1, 1]
+        out = w * torch.cat((rgb, dep), dim=1)
+        return out[:, :c, :, :] + out[:, c:, :, :]
+
+class SC_Block(nn.Module):
+    def __init__(self, in_feats, layers=(2, 4, 7)):
+        super().__init__()
+        self.layers = layers
+        # Original
+        for i in layers:
+            layer = nn.Sequential(
+                nn.Conv2d(in_feats, 1, kernel_size=i, stride=i//2, bias=False),
+                nn.ReLU()
+            )
+            self.add_module('ss%d' % i, layer)
+        
+        self.att_conv = nn.Sequential(
+            nn.Conv2d(len(layers), 1, kernel_size=1, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        _, _, h, w = x.size()
+        sp_layers = []
+        for i in self.layers:
+            # l = F.interpolate(self.__getattr__('ss%d' % i)(x), size=(h, w))
+            l = F.interpolate(self.__getattr__('ss%d' % i)(x), size=(h, w), mode='bilinear', align_corners=False)
+            sp_layers.append(l)
+        y = torch.cat(tuple(sp_layers), dim=1)
+        w = self.att_conv(y)
+        return w * x
+
+class PSC_Block(nn.Module):
+    def __init__(self, in_feats, pp_size=(1, 2, 4, 8), mid_feats=16):
+        super().__init__()
+
+        self.pp_size = pp_size
+        self.ave_pool = True
+        self.max_pool = False
+        
+        # # Var 1
+        # lin_feats = sum([i**2 for i in pp_size])
+        # out_feats = max(pp_size) ** 2
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(lin_feats, mid_feats, bias=False),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(mid_feats, out_feats, bias=False),
+        #     nn.Sigmoid()
+        # )
+
+        # Var 2
+        self.att_conv = nn.Sequential(
+            nn.Conv2d(len(pp_size) * (self.ave_pool+self.max_pool), 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+
     def forward(self, x):
         b, c, h, w = x.size()
-        x_in = x.view(b, 1, c, h*w)                                   # [b, 1, c, h*w]
-        context_mask = self.att_conv(x).view(b, 1, -1)                # [b, 1, h*w]
-        context_mask = self.softmax(context_mask).unsqueeze(-1)       # [b, 1, h*w, 1]
-        context = torch.matmul(x_in, context_mask).view(b, -1, 1, 1)  # [b, c, 1, 1]
-        out = x + self.channel_add_conv(context)
-        return out
+        sp_layers = []
+
+        # # Var 1
+        # for i in self.pp_size:
+        #     l = F.adaptive_avg_pool2d(x, i).view(b, c, 1, -1)
+        #     l = torch.mean(l, dim=1).view(b, -1)
+        #     sp_layers.append(l)
+        # y = torch.cat(tuple(sp_layers), dim=1)
+        # paw = self.mlp(y).view(b, 1, max(self.pp_size), -1)
+
+        # Var 2
+        for i in self.pp_size:
+            if self.ave_pool:
+                l = torch.mean(F.adaptive_avg_pool2d(x, i), dim=1).view(b, 1, i, i)
+                sp_layers.append(F.interpolate(l, size=max(self.pp_size)))
+            if self.max_pool:
+                l = torch.mean(F.adaptive_max_pool2d(x, i), dim=1).view(b, 1, i, i)
+                sp_layers.append(F.interpolate(l, size=max(self.pp_size)))
+        y = torch.cat(tuple(sp_layers), dim=1)
+        paw = F.interpolate(self.att_conv(y), size=(h, w), mode='bilinear', align_corners=False)
+        
+        return paw * x
+
+class PCA_Block(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        self.pam = PSC_Block(in_feats)
+        self.cam = PDL_Block(in_feats)
+        self.use_lamb = PCA_FUSE_LAMB
+        self.lamb = nn.Parameter(torch.zeros(1))
+        print('[PCA]: use_lamb =', self.use_lamb)
+    
+    def forward(self, x):
+        # # Var 1
+        # c = self.cam(x)
+        # p = self.pam(x)
+        # return self.lamb * c + (1 - self.lamb) * p if self.use_lamb else c + p
+        # # Var 2
+        # y = self.cam(x)
+        # y = self.pam(y)
+        # Var 3
+        y = self.pam(x)
+        y = self.cam(y)
+        return y
 
 class SE_Block(nn.Module):
-    def __init__(self, in_feats, mid_factor=4):
+    def __init__(self, in_feats, mid_factor=16):
         super().__init__()
         self.mid_feats = in_feats // mid_factor
         self.fc = nn.Sequential(
             nn.Conv2d(in_feats, self.mid_feats, kernel_size=1),
+            # nn.BatchNorm2d(self.mid_feats),
             nn.ReLU(inplace=True),
             nn.Conv2d(self.mid_feats, in_feats, kernel_size=1),
             nn.Sigmoid()
@@ -126,30 +400,27 @@ class SPA_Block(nn.Module):
         out = weighting * x
         return out
 
-class PP_Block(nn.Module):
-    def __init__(self, in_feats, pp_layer=3, reduction=16):
+class GC_Block(nn.Module):
+    def __init__(self, in_feats, mid_factor=4):
         super().__init__()
-        self.pp_layer = pp_layer
-        self.pp_size = 2 ** (pp_layer-1)
-        self.fc = nn.Sequential(
-            nn.Conv2d(pp_layer * in_feats, in_feats, kernel_size=1),
-            nn.BatchNorm2d(in_feats),
+        mid_feats = in_feats // mid_factor
+        self.softmax = nn.Softmax(dim=-1)
+        self.att_conv = nn.Conv2d(in_feats, 1, kernel_size=1)
+        self.channel_add_conv = nn.Sequential(
+            nn.Conv2d(in_feats, mid_feats, kernel_size=1),
+            nn.LayerNorm([mid_feats, 1, 1]),
             nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_feats, in_feats // reduction, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_feats // reduction, in_feats, kernel_size=1),
-            nn.Sigmoid()
+            nn.Conv2d(mid_feats, in_feats, kernel_size=1)
         )
-
+    
     def forward(self, x):
-        # b, c, _, _ = x.size()
-        pooling_pyramid = []
-        for i in range(self.pp_layer):
-            pooling_pyramid.append(F.interpolate(F.adaptive_avg_pool2d(x, 2 ** i), size=self.pp_size))
-        y = torch.cat(tuple(pooling_pyramid), dim=1)
-        weighting = self.fc(y)
-        return weighting * x
+        b, c, h, w = x.size()
+        x_in = x.view(b, 1, c, h*w)                                   # [b, 1, c, h*w]
+        context_mask = self.att_conv(x).view(b, 1, -1)                # [b, 1, h*w]
+        context_mask = self.softmax(context_mask).unsqueeze(-1)       # [b, 1, h*w, 1]
+        context = torch.matmul(x_in, context_mask).view(b, -1, 1, 1)  # [b, c, 1, 1]
+        out = x + self.channel_add_conv(context)
+        return out
 
 class ECA_Block(nn.Module):
     """Constructs a ECA module.
@@ -159,6 +430,7 @@ class ECA_Block(nn.Module):
     """
     def __init__(self, in_feats, gamma=2, b=1):
         super(ECA_Block, self).__init__()
+        from math import log
         t = int(abs((log(in_feats, 2) + b) / gamma))
         k = t if t % 2 else t + 1
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
@@ -179,14 +451,29 @@ class SCSE_Block(nn.Module):
     def __init__(self, ch, re=16):
         super().__init__()
         self.cSE = nn.Sequential(nn.AdaptiveAvgPool2d(1),
-                                 nn.Conv2d(ch, ch // re,1),
+                                 nn.Conv2d(ch, ch//re,1),
                                  nn.ReLU(inplace = True),
-                                 nn.Conv2d(ch // re, ch, 1),
+                                 nn.Conv2d(ch//re, ch, 1),
                                  nn.Sigmoid())
         self.sSE = nn.Sequential(nn.Conv2d(ch, ch, 1),
                                  nn.Sigmoid())
     def forward(self, x):
         return x * self.cSE(x) + x * self.sSE(x)
+
+class ResidualConvUnit(nn.Module):
+    def __init__(self, features):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True)
+        self.conv2 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=False)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        out = self.relu(x)
+        out = self.conv1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        return out + x
 
 class MultiResolutionFusion(nn.Module):
     def __init__(self, out_feats, *shapes):
@@ -295,80 +582,3 @@ class BaseRefineNetBlock(nn.Module):
             out = rcu_xs[0]
 
         return self.output_conv(out)
-
-# class MultiResolutionFusion_Concat(nn.Module):
-#     def __init__(self, out_feats, *shapes):
-#         super().__init__()
-#         _, min_scale = min(shapes, key=lambda x: x[1])
-
-#         self.scale_factors = []
-#         for i, shape in enumerate(shapes):
-#             feat, scale= shape
-#             self.scale_factors.append(scale // min_scale)
-#             self.add_module("resolve{}".format(i),
-#                             nn.Conv2d(feat, out_feats, kernel_size=3, stride=1, padding=1, bias=False))
-        
-#         self.out_block = nn.Sequential(
-#             nn.Conv2d(len(shapes)*out_feats, out_feats, kernel_size=1, stride=1, padding=0, bias=False),
-#             # nn.BatchNorm2d(out_feats), nn.ReLU(inplace=True),
-#             # nn.Conv2d(out_feats, out_feats, kernel_size=3, stride=1, padding=1, bias=False)
-#         )
-
-#     def forward(self, *xs):
-
-#         concat_feat = [self.resolve0(xs[0])]
-#         if self.scale_factors[0] != 1:
-#             concat_feat[0] = nn.functional.interpolate(concat_feat[0], scale_factor=self.scale_factors[0], mode='bilinear', align_corners=True)
-
-#         for i, x in enumerate(xs[1:], 1): # the value for i starts from 1
-#             out = self.__getattr__("resolve{}".format(i))(x)
-#             if self.scale_factors[i] != 1:
-#                 out = nn.functional.interpolate(out, scale_factor=self.scale_factors[i], mode='bilinear', align_corners=True)
-#             concat_feat.append(out)
-        
-#         output = torch.cat(tuple(concat_feat), 1)
-#         output = self.out_block(output)
-#         return output
-
-
-# class ChainedResidualPool(nn.Module):
-#     def __init__(self, feats):
-#         super().__init__()
-
-#         self.relu = nn.ReLU(inplace=True)
-#         for i in range(1, 4):
-#             self.add_module("block{}".format(i),
-#                             nn.Sequential(nn.MaxPool2d(kernel_size=5, stride=1, padding=2),
-#                                           nn.Conv2d(feats, feats, kernel_size=3, stride=1, padding=1, bias=False))
-#                             )
-
-#     def forward(self, x):
-#         x = self.relu(x)
-#         path = x
-
-#         for i in range(1, 4):
-#             path = self.__getattr__("block{}".format(i))(path)
-#             x = x + path
-
-#         return x
-
-
-# class ChainedResidualPoolImproved(nn.Module):
-#     def __init__(self, feats):
-#         super().__init__()
-
-#         self.relu = nn.ReLU(inplace=True)
-#         for i in range(1, 5):
-#             self.add_module("block{}".format(i),
-#                             nn.Sequential(nn.Conv2d(feats, feats, kernel_size=3, stride=1, padding=1, bias=False),
-#                                           nn.MaxPool2d(kernel_size=5, stride=1, padding=2)))
-
-#     def forward(self, x):
-#         x = self.relu(x)
-#         path = x
-
-#         for i in range(1, 5):
-#             path = self.__getattr__("block{}".format(i))(path)
-#             x += path
-
-#         return x
