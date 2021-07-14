@@ -15,11 +15,12 @@ class Decoder(nn.Module):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, n_features, n_classes, conv_module='bb', level_fuse='gau'):
+    def __init__(self, n_features, n_classes, conv_module='cbr', level_fuse='simple', out='dep'):
         super().__init__()
 
-        level_fuse_dict = {'simple': Simple_Level_Fuse, 'gau': GAU_Block}
+        self.out = out
 
+        level_fuse_dict = {'simple': Simple_Level_Fuse, 'gau': GAU_Block}
         self.refine2 = level_fuse_dict[level_fuse](64)
         self.refine3 = level_fuse_dict[level_fuse](128)
         self.refine4 = level_fuse_dict[level_fuse](256)
@@ -49,7 +50,12 @@ class Base_Decoder(nn.Module):
             raise ValueError('Invalid conv module: %s.' % conv_module)
 
     def forward(self, feats):
-        l1, l2, l3, l4 = feats.l1, feats.l2, feats.l3, feats.l4
+        if self.out == 'rgb':
+            l1, l2, l3, l4 = feats.l1, feats.l2, feats.l3, feats.l4
+        elif self.out == 'dep':
+            l1, l2, l3, l4 = feats.d1, feats.d2, feats.d3, feats.d4
+        else:
+            raise ValueError('Invalid out feats: %s.' % self.out)
 
         y4 = self.up4(l4)          # [B, 256, h/16, w/16]
         y3 = self.refine4(y4, l3)  # [B, 256, h/16, w/16]

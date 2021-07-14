@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-__all__ = ['Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'PPE_Block', 'PPCE_Block']
+__all__ = ['Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse', 'PPE_Block', 'PPCE_Block']
 
 RGBD_FUSE_LAMB = False
 PCA_FUSE_LAMB = False
@@ -13,7 +13,7 @@ class Simple_RGBD_Fuse(nn.Module):
         super().__init__()
         
     def forward(self, x, d):
-        return x+d
+        return x+d, d
 
 class RGBD_Fuse_Block(nn.Module):
     def __init__(self, in_feats, out_method='concat', pre_module='se', mode='late', pre_setting={}): # out_feats=None, 
@@ -40,13 +40,15 @@ class RGBD_Fuse_Block(nn.Module):
             )
 
     def forward(self, rgb, dep):
+        d = dep.clone()
         if self.mode == 'late':
             rgb = self.rgb_pre(rgb)
             dep = self.dep_pre(dep)
             if self.out_method == 'add':
-                return (1 - self.lamb) * rgb + self.lamb * dep if self.use_lamb else rgb + dep
+                # (1 - self.lamb) * 
+                out = rgb + self.lamb * dep if self.use_lamb else rgb + dep
             else:
-                return self.out_block(torch.cat((rgb, dep), 1))
+                out = self.out_block(torch.cat((rgb, dep), 1))
         elif self.mode == 'early':
             _, c, _, _ = rgb.size()
             feats = torch.cat((rgb, dep), dim=1)
@@ -54,11 +56,66 @@ class RGBD_Fuse_Block(nn.Module):
             if self.out_method == 'add':
                 rgb = feats[:, :c, :, :]
                 dep = feats[:, c:, :, :]
-                return (1 - self.lamb) * rgb + self.lamb * dep if self.use_lamb else rgb + dep
+                out = rgb + self.lamb * dep if self.use_lamb else rgb + dep
             else:
-                return self.out_block(feats)
+                out =  self.out_block(feats)
         else:
             raise ValueError('Invalid Fuse Mode: ' + str(self.mode))
+
+        return out, d
+
+class GAU_Fuse(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        refine_rgb, refine_dep = False, True
+        self.rgb_ref = GAU_Block(in_feats) if refine_rgb else Identity_Block()
+        self.dep_ref = GAU_Block(in_feats) if refine_dep else Identity_Block()
+
+    def forward(self, rgb, dep):
+        return self.rgb_ref(rgb, dep), self.dep_ref(dep, rgb)
+        
+class Identity_Block(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, y, x):
+         return y
+
+class GAU_Block(nn.Module):
+    def __init__(self, in_feats, m=16):
+        super().__init__()
+        # 参考PAN x 为浅层网络，y为深层网络
+        if m == -1:
+            self.x_conv = nn.Sequential(nn.Conv2d(in_feats, in_feats, kernel_size=3, padding=1, bias=False),
+                                        nn.BatchNorm2d(in_feats))
+            self.y_gap = nn.AdaptiveAvgPool2d(1)
+            self.y_conv = nn.Sequential(nn.Conv2d(in_feats, in_feats, kernel_size=1, padding=0, bias=False),
+                                        nn.BatchNorm2d(in_feats),
+                                        nn.ReLU(inplace=True))
+        else:
+            mid_feats = m
+            self.x_conv = nn.Sequential(nn.Conv2d(in_feats, mid_feats, kernel_size=3, padding=1, bias=False),
+                                        nn.BatchNorm2d(mid_feats),
+                                        nn.ReLU(inplace=True),
+                                        nn.Conv2d(mid_feats, in_feats, kernel_size=3, padding=1, bias=False),
+                                        nn.BatchNorm2d(in_feats))
+
+            self.y_gap = nn.AdaptiveAvgPool2d(1)
+            self.y_conv = nn.Sequential(nn.Conv2d(in_feats, mid_feats, kernel_size=3, padding=1, bias=False),
+                                        nn.BatchNorm2d(mid_feats),
+                                        nn.ReLU(inplace=True),
+                                        nn.Conv2d(mid_feats, in_feats, kernel_size=3, padding=1, bias=False),
+                                        nn.BatchNorm2d(in_feats),
+                                        nn.ReLU(inplace=True))
+
+    def forward(self, y, x):
+        x1 = self.x_conv(x)      # [B, c, h, w]
+
+        y1 = self.y_gap(y)       # [B, c, 1, 1]
+        y1 = self.y_conv(y1)     # [B, c, 1, 1]
+
+        out = y1*x1 + y
+        return out
 
 
 class PP_Block(nn.Module):
@@ -334,13 +391,14 @@ class PSC_Block(nn.Module):
         return paw * x
 
 class PCA_Block(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, mode='pc'):
         super().__init__()
         self.pam = PSC_Block(in_feats)
         self.cam = PDL_Block(in_feats)
-        self.use_lamb = PCA_FUSE_LAMB
-        self.lamb = nn.Parameter(torch.zeros(1))
-        print('[PCA]: use_lamb =', self.use_lamb)
+        if mode == 'add':
+            self.use_lamb = PCA_FUSE_LAMB
+            self.lamb = nn.Parameter(torch.zeros(1))
+            print('[PCA]: use_lamb =', self.use_lamb)
     
     def forward(self, x):
         # # Var 1

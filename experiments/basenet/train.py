@@ -68,13 +68,14 @@ class Trainer():
         self.nclass = trainset.num_class
 
         # Choice of modules
-        self.module_setting = Dict({'n_features': 128, 'ef': args.early_fusion, 'decoder': 'refine', 
-                                    'rgbd_fuse': 'add', 'pre_module': 'pca', 'rgbd_mode': 'late'})
-        print(self.module_setting)
+        self.config = Dict({'n_features': 128, 'ef': args.early_fusion, 'decoder': 'base', 'rgbd_fuse': 'fuse',
+                            'rgbd_op': 'add', 'rgbd_mode': 'late', 'pre_module': 'pca'
+                      })
+        print(self.config)
 
         # model and params
         model = get_segmentation_model(args.model, dataset=args.dataset, backbone=args.backbone, pretrained=True,
-                                       root='../../encoding/models/pretrain', module_setting=self.module_setting)
+                                       root='../../encoding/models/pretrain', config=self.config)
         print(model)
 
         # optimizer using different LR
@@ -93,7 +94,7 @@ class Trainer():
                                             aux_weight=args.aux_weight)
         # lr scheduler
         self.scheduler = utils.LR_Scheduler_Head(args.lr_scheduler, args.lr, args.epochs, len(self.trainloader))
-        self.best_pred = 0.0
+        self.best_pred = (0.0, 0.0)
 
         # using cuda
         self.device = torch.device("cuda:0" if args.cuda else "cpu")
@@ -129,7 +130,7 @@ class Trainer():
 
         total_inter, total_union, total_correct, total_label, total_loss = 0, 0, 0, 0, 0
         for i, (image, dep, target) in enumerate(self.trainloader):
-            self.scheduler(self.optimizer, i, epoch, self.best_pred)
+            self.scheduler(self.optimizer, i, epoch, sum(self.best_pred))
             self.optimizer.zero_grad()
             
             if self.args.early_fusion:
@@ -184,8 +185,8 @@ class Trainer():
 
             # save the best model
             is_best = False
-            new_pred = (pixAcc + mIOU) / 2
-            if new_pred > self.best_pred:
+            new_pred = (round(mIOU, 6), round(pixAcc, 6))
+            if sum(new_pred) > sum(self.best_pred):
                 is_best = True
                 self.best_pred = new_pred
                 best_state_dict = self.model.module.state_dict()
@@ -194,17 +195,18 @@ class Trainer():
                                    'optimizer': self.optimizer.state_dict(),
                                    'best_pred': self.best_pred}, self.args, is_best)
 
-
-        final_result = '\nPerformance of last 5 epochs\n[mIoU]: %4f\n[Pixel_Acc]: %4f\n' % (sum(results.miou[-5:]) / 5, sum(results.pix_acc[-5:]) / 5)
+        final_miou, final_pix_acc = sum(results.miou[-5:]) / 5, sum(results.pix_acc[-5:]) / 5
+        final_result = '\nPerformance of last 5 epochs\n[mIoU]: %4f\n[Pixel_Acc]: %4f\n[Best Pred]: %s\n' % (final_miou, final_pix_acc, self.best_pred)
         print(final_result)
         
         # Export weights if needed
-        if self.args.export:
+        if self.args.export or self.best_pred[0] > 0.447:
             export_info = '/%s_%s_%s' % (self.args.model, self.args.dataset, int(time.time()))
             torch.save(best_state_dict, SMY_PATH + export_info + '.pth')
             with open(SMY_PATH + export_info + '.txt', 'w') as f:
-                f.write(str(self.module_setting) + '\n')
-                f.write(final_result)
+                f.write(str(self.config) + '\n')
+                f.write(final_result + '\n')
+                f.write(str(self.model))
 
     def validation(self, epoch):
         # Fast test during the training
