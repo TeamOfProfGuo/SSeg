@@ -9,7 +9,6 @@ import sys
 import time
 import yaml
 import numpy as np
-# from tqdm import tqdm
 from addict import Dict
 
 import torch
@@ -17,22 +16,20 @@ import torch.nn as nn
 from torch.utils import data
 from tensorboardX import SummaryWriter
 import torchvision.transforms as transform
-# from torch.nn.parallel.scatter_gather import gather
 
-# Default Work Dir: /gpfsnyu/scratch/[NetID]/DANet/
-BASE_DIR = os.getcwd()
+# Default Work Dir: /scratch/[NetID]/SSeg/experiments/[Model]/
+BASE_DIR = os.path.join(os.getcwd(), '../..')
 sys.path.append(BASE_DIR)
 # Path for config and summary files
-CONFIG_PATH = './experiments/basenet/results/config.yaml'
-SMY_PATH = os.path.dirname(CONFIG_PATH)
-# GPU ids
+CONFIG_PATH = './results/config.yaml'
+SMY_PATH = os.path.join(os.path.dirname(CONFIG_PATH), sys.argv[1])
+# GPU ids (only when there are multiple GPUs)
 GPUS = [0, 1]
 
-import encoding.utils as utils
-from encoding.nn import SegmentationLosses #, SyncBatchNorm
-# from encoding.parallel import DataParallelModel, DataParallelCriterion
-from encoding.datasets import get_dataset
-from encoding.models import get_segmentation_model
+import net.utils as utils
+from net.nn import SegmentationLoss
+from net.datasets import get_dataset
+from net.models import get_segmentation_model
 
 class Trainer():
     def __init__(self, args):
@@ -68,8 +65,8 @@ class Trainer():
         self.nclass = trainset.num_class
 
         # Choice of modules
-        self.config = Dict({'n_features': 128, 'ef': args.early_fusion, 'decoder': 'base', 'rgbd_fuse': 'fuse',
-                            'rgbd_op': 'add', 'rgbd_mode': 'late', 'pre_module': 'pca'
+        self.config = Dict({'n_features': 128, 'ef': args.early_fusion, 'decoder': 'base', 'rgbd_fuse': 'simple',
+                            # 'rgbd_op': 'add', 'rgbd_mode': 'late', 'pre_module': 'pca'
                       })
         print(self.config)
 
@@ -87,11 +84,11 @@ class Trainer():
                                          lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
         # criterions
-        self.criterion = SegmentationLosses(se_loss=args.se_loss,
-                                            aux=args.aux,
-                                            nclass=self.nclass,
-                                            se_weight=args.se_weight,
-                                            aux_weight=args.aux_weight)
+        self.criterion = SegmentationLoss(se_loss=args.se_loss,
+                                          aux=args.aux,
+                                          nclass=self.nclass,
+                                          se_weight=args.se_weight,
+                                          aux_weight=args.aux_weight)
         # lr scheduler
         self.scheduler = utils.LR_Scheduler_Head(args.lr_scheduler, args.lr, args.epochs, len(self.trainloader))
         self.best_pred = (0.0, 0.0)
@@ -102,17 +99,25 @@ class Trainer():
             if torch.cuda.device_count() > 1:
                 print("Let's use", torch.cuda.device_count(), "GPUs!")  # [30,xxx]->[10,...],[10,...],[10,...] on 3 GPUs
                 model = nn.DataParallel(model, device_ids=GPUS)
+                self.multi_gpu = True
+            else:
+                self.multi_gpu = False
         self.model = model.to(self.device)
 
         # for writing summary
+        if not os.path.isdir(SMY_PATH):
+            utils.mkdir(SMY_PATH)
         self.writer = SummaryWriter(SMY_PATH)
+        image_sample = next(iter(self.trainloader))
+        self.writer.add_graph(model, (image_sample[0].to(self.device), image_sample[1].to(self.device)))
+
         # resuming checkpoint
         if args.resume is not None and args.resume != 'None':
             if not os.path.isfile(args.resume):
                 raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            if args.cuda:
+            if self.multi_gpu:
                 self.model.module.load_state_dict(checkpoint['state_dict'])
             else:
                 self.model.load_state_dict(checkpoint['state_dict'])
@@ -135,7 +140,7 @@ class Trainer():
             
             if self.args.early_fusion:
                 image_with_dep = torch.cat((image, dep), 1)
-                image_with_dep, target = image_with_dep.to(self.device), target.to(self.device)
+                image_with_dep, dep, target = image_with_dep.to(self.device), dep.to(self.device), target.to(self.device)
                 outputs = self.model(image_with_dep, dep)
             else:
                 image, dep, target = image.to(self.device), dep.to(self.device), target.to(self.device)
@@ -189,9 +194,9 @@ class Trainer():
             if sum(new_pred) > sum(self.best_pred):
                 is_best = True
                 self.best_pred = new_pred
-                best_state_dict = self.model.module.state_dict()
+                best_state_dict = self.model.module.state_dict() if self.multi_gpu else self.model.state_dict()
             utils.save_checkpoint({'epoch': epoch + 1,
-                                   'state_dict': self.model.module.state_dict(),
+                                   'state_dict': self.model.module.state_dict() if self.multi_gpu else self.model.state_dict(),
                                    'optimizer': self.optimizer.state_dict(),
                                    'best_pred': self.best_pred}, self.args, is_best)
 
@@ -224,9 +229,9 @@ class Trainer():
             # image, dep, target = image.to(self.device), dep.to(self.device), target.to(self.device)
             if self.args.early_fusion:
                 image_with_dep = torch.cat((image, dep), 1)
-                image_with_dep, target = image_with_dep.to(self.device), target.to(self.device)
+                image_with_dep, dep, target = image_with_dep.to(self.device), dep.to(self.device), target.to(self.device)
             else:
-                image, target = image.to(self.device), target.to(self.device)
+                image, dep, target = image.to(self.device), dep.to(self.device), target.to(self.device)
 
             with torch.no_grad():
                 correct, labeled, inter, union, loss = eval_batch(self.model, image_with_dep if self.args.early_fusion else image, dep, target)
@@ -251,6 +256,7 @@ class Trainer():
 
 
 if __name__ == "__main__":
+    print('[Exp Name]:', sys.argv[1])
     print("-------mark program start----------")
     # configuration
     args = Dict(yaml.safe_load(open(CONFIG_PATH)))
