@@ -5,18 +5,18 @@ from torch.nn import functional as F
 
 __all__ = ['Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse', 'PPE_Block', 'PPCE_Block']
 
-RGBD_FUSE_LAMB = False
 PCA_FUSE_LAMB = False
 
 class Simple_RGBD_Fuse(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, **kwargs):
         super().__init__()
         
     def forward(self, x, d):
         return x+d, d
 
 class RGBD_Fuse_Block(nn.Module):
-    def __init__(self, in_feats, out_method='concat', pre_module='se', mode='late', pre_setting={}): # out_feats=None, 
+    def __init__(self, in_feats, out_method='max', pre_module='pca', mode='late', pre_setting={},
+                    use_lamb=False, refine_dep=True):
         super().__init__()
         module_dict = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 
                        'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
@@ -24,7 +24,8 @@ class RGBD_Fuse_Block(nn.Module):
         self.mode = mode
         self.module = module_dict[pre_module]
         self.out_method = out_method
-        self.use_lamb = RGBD_FUSE_LAMB
+        self.use_lamb = use_lamb
+        self.refine_dep = refine_dep
         self.lamb = nn.Parameter(torch.zeros(1))
         print('[RGB-D Fuse]: use_lamb =', self.use_lamb)
         if mode == 'late':
@@ -47,6 +48,8 @@ class RGBD_Fuse_Block(nn.Module):
             if self.out_method == 'add':
                 # (1 - self.lamb) * 
                 out = rgb + self.lamb * dep if self.use_lamb else rgb + dep
+            elif self.out_method == 'max':
+                out = torch.max(rgb, dep)
             else:
                 out = self.out_block(torch.cat((rgb, dep), 1))
         elif self.mode == 'early':
@@ -62,7 +65,7 @@ class RGBD_Fuse_Block(nn.Module):
         else:
             raise ValueError('Invalid Fuse Mode: ' + str(self.mode))
 
-        return out, d
+        return out, (dep if self.refine_dep else d)
 
 class GAU_Fuse(nn.Module):
     def __init__(self, in_feats):
@@ -393,6 +396,7 @@ class PSC_Block(nn.Module):
 class PCA_Block(nn.Module):
     def __init__(self, in_feats, mode='pc'):
         super().__init__()
+        self.mode = mode
         self.pam = PSC_Block(in_feats)
         self.cam = PDL_Block(in_feats)
         if mode == 'add':
@@ -401,16 +405,22 @@ class PCA_Block(nn.Module):
             print('[PCA]: use_lamb =', self.use_lamb)
     
     def forward(self, x):
-        # # Var 1
-        # c = self.cam(x)
-        # p = self.pam(x)
-        # return self.lamb * c + (1 - self.lamb) * p if self.use_lamb else c + p
-        # # Var 2
-        # y = self.cam(x)
-        # y = self.pam(y)
-        # Var 3
-        y = self.pam(x)
-        y = self.cam(y)
+        if self.mode == 'add':
+            c = self.cam(x)
+            p = self.pam(x)
+            y = self.lamb * c + (1 - self.lamb) * p if self.use_lamb else c + p
+        elif self.mode == 'max':
+            c = self.cam(x)
+            p = self.pam(x)
+            y = torch.max(c, p)
+        elif self.mode == 'pc':
+            y = self.pam(x)
+            y = self.cam(y)
+        elif self.mode == 'cp':
+            y = self.cam(x)
+            y = self.pam(y)
+        else:
+            raise ValueError('Invalid PCA mode %s.' % self.mode)
         return y
 
 class SE_Block(nn.Module):

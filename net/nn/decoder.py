@@ -6,21 +6,23 @@ from torch.nn import functional as F
 __all__ = ['Decoder']
 
 class Decoder(nn.Module):
-    def __init__(self, n_features, n_classes, decoder='base'):
+    def __init__(self, n_features, n_classes, decoder='base', decoder_args={}):
         super().__init__()
         decoder_dict = {'base': Base_Decoder, 'refine': Refine_Decoder, 'pa': PA_Decoder}
-        self.decoder = decoder_dict[decoder](n_features, n_classes)
+        self.decoder = decoder_dict[decoder](n_features, n_classes, **decoder_args)
     
     def forward(self, feats):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, n_features, n_classes, conv_module='cbr', level_fuse='simple', out='rgb'):
+    def __init__(self, n_features, n_classes, conv_module='cbr', level_fuse='simple', feats='f', skip=False):
         super().__init__()
 
-        self.out = out
+        self.feats = feats
 
-        level_fuse_dict = {'simple': Simple_Level_Fuse, 'gau': GAU_Block}
+        self.lamb = nn.Parameter(torch.zeros(1)) if skip else 0
+
+        level_fuse_dict = {'simple': Simple_Level_Fuse, 'max': Max_Level_Fuse, 'gau': GAU_Block}
         self.refine2 = level_fuse_dict[level_fuse](64)
         self.refine3 = level_fuse_dict[level_fuse](128)
         self.refine4 = level_fuse_dict[level_fuse](256)
@@ -50,21 +52,23 @@ class Base_Decoder(nn.Module):
             raise ValueError('Invalid conv module: %s.' % conv_module)
 
     def forward(self, feats):
-        if self.out == 'rgb':
-            l1, l2, l3, l4 = feats.l1, feats.l2, feats.l3, feats.l4
-        elif self.out == 'dep':
-            l1, l2, l3, l4 = feats.d1, feats.d2, feats.d3, feats.d4
+        if self.feats == 'l':
+            x1, x2, x3, x4 = feats.l1, feats.l2, feats.l3, feats.l4
+        elif self.feats == 'd':
+            x1, x2, x3, x4 = feats.d1, feats.d2, feats.d3, feats.d4
+        elif self.feats == 'f':
+            x1, x2, x3, x4 = feats.f1, feats.f2, feats.f3, feats.f4
         else:
-            raise ValueError('Invalid out feats: %s.' % self.out)
+            raise ValueError('Invalid out feats: %s.' % self.feats)
 
-        y4 = self.up4(l4)          # [B, 256, h/16, w/16]
-        y3 = self.refine4(y4, l3)  # [B, 256, h/16, w/16]
+        y4 = self.up4(x4)          # [B, 256, h/16, w/16]
+        y3 = self.refine4(y4, x3) + self.lamb * feats.l3
 
         y3 = self.up3(y3)          # [B, 128, h/8, w/8]
-        y2 = self.refine3(y3, l2)  # [B, 128, h/8, w/8]
+        y2 = self.refine3(y3, x2) + self.lamb * feats.l2
 
         y2 = self.up2(y2)          # [B, 64, h/4, w/4]
-        y1 = self.refine2(y2, l1)  # [B, 64, h/4, w/4]
+        y1 = self.refine2(y2, x1) + self.lamb * feats.l1
 
         return self.out_conv(y1)
 
@@ -90,8 +94,10 @@ class PA_Decoder(nn.Module):
         return self.out_conv(feats)
 
 class Refine_Decoder(nn.Module):
-    def __init__(self, n_features, n_classes):
+    def __init__(self, n_features, n_classes, feats='f'):
         super().__init__()
+
+        self.feats = feats
 
         self.refine_conv1 = nn.Conv2d( 64, n_features, kernel_size=3, stride=1, padding=1, bias=False)
         self.refine_conv2 = nn.Conv2d(128, n_features, kernel_size=3, stride=1, padding=1, bias=False)
@@ -108,10 +114,19 @@ class Refine_Decoder(nn.Module):
             nn.Conv2d(n_features, n_classes, kernel_size=1, stride=1, padding=0, bias=True))
 
     def forward(self, feats):
-        l1 = self.refine_conv1(feats.l1)
-        l2 = self.refine_conv2(feats.l2)
-        l3 = self.refine_conv3(feats.l3)
-        l4 = self.refine_conv4(feats.l4)
+        if self.feats == 'l':
+            x1, x2, x3, x4 = feats.l1, feats.l2, feats.l3, feats.l4
+        elif self.feats == 'd':
+            x1, x2, x3, x4 = feats.d1, feats.d2, feats.d3, feats.d4
+        elif self.feats == 'f':
+            x1, x2, x3, x4 = feats.f1, feats.f2, feats.f3, feats.f4
+        else:
+            raise ValueError('Invalid out feats: %s.' % self.feats)
+
+        l1 = self.refine_conv1(x1)
+        l2 = self.refine_conv2(x2)
+        l3 = self.refine_conv3(x3)
+        l4 = self.refine_conv4(x4)
 
         y4 = self.refine4(l4)       # [B, 512, h/32, w/32]
         y3 = self.refine3(y4, l3)   # [B, 256, h/16, w/16]
@@ -281,6 +296,13 @@ class Simple_Level_Fuse(nn.Module):
         
     def forward(self, x, y):
         return x+y
+
+class Max_Level_Fuse(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        
+    def forward(self, x, y):
+        return torch.max(x, y)
 
 class GAU_Block(nn.Module):
     def __init__(self, in_feats, r=16):

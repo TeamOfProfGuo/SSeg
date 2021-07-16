@@ -16,7 +16,7 @@ aux: False           #'Auxilary Loss'
 aux_weight: 0.2      #'Auxilary loss weight (default: 0.2)
 se_loss: False       #'Semantic Encoding Loss SE-loss'
 se_weight: 0.2       #'SE-loss weight (default: 0.2)'
-epochs: 400          #'number of epochs to train (default: auto)'
+epochs: 500          #'number of epochs to train (default: auto)'
 start_epoch: 0       #'start epochs (default:0)'
 batch_size: 8        #'input batch size for training (default: auto)'
 test_batch_size: 8   #'input batch size for testing (default: same as batch size)'

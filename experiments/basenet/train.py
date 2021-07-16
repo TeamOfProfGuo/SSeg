@@ -64,16 +64,15 @@ class Trainer():
         self.valloader = data.DataLoader(testset, batch_size=args.batch_size, drop_last=False, shuffle=False, **kwargs)
         self.nclass = trainset.num_class
 
-        # Choice of modules
-        self.config = Dict({'n_features': 128, 'ef': args.early_fusion, 'decoder': 'base', 'rgbd_fuse': 'simple',
-                            # 'rgbd_op': 'add', 'rgbd_mode': 'late', 'pre_module': 'pca'
-                      })
-        print(self.config)
-
         # model and params
-        model = get_segmentation_model(args.model, dataset=args.dataset, backbone=args.backbone, pretrained=True,
-                                       root='../../encoding/models/pretrain', config=self.config)
+        model = get_segmentation_model(args.model, dataset=args.dataset, backbone=args.backbone, 
+                                       pretrained=True, root='../../encoding/models/pretrain')
         print(model)
+
+        # config
+        self.config = model.config
+        for k, v in self.config.items():
+            print('[%s]: %s' % (k, v))
 
         # optimizer using different LR
         base_ids = list(map(id, model.rgb_base.parameters())) + list(map(id, model.dep_base.parameters()))
