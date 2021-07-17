@@ -3,16 +3,24 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from ..utils import interpolate
+
 __all__ = ['Centerpiece']
 
 class Centerpiece(nn.Module):
-    def __init__(self, in_feats, cp='psp', cp_args={}):
+    def __init__(self, cp='psp', feats='f', cp_args={}):
         super().__init__()
+        self.feats = feats
+        self.feats_list = [64, 128, 256, 512]
         cp_dict = {'none': Identity_Module, 'psp': PSP_Module}
-        self.cp = cp_dict[cp](in_feats, **cp_args)
+        for i in range(len(self.feats_list)):
+            self.add_module('cp%d' % (i+1), cp_dict[cp](self.feats_list[i], **cp_args))
     
-    def forward(self, x):
-        return self.cp(x)
+    def forward(self, feats):
+        for i in range(len(self.feats_list)):
+            k = '%s%d' % (self.feats, i+1)
+            feats[k] = self.__getattr__('cp%d' % (i+1))(feats[k])
+        return feats
 
 class Identity_Module(nn.Module):
     def __init__(self, *args, **kwargs):
@@ -44,5 +52,5 @@ class PSP_Module(nn.Module):
         out = [self.rf_conv(x)]
         for s in self.size:
             feats = self.__getattr__('pool%d' % s)(x)
-            out.append(F.interpolate(feats, size=(h, w), mode=self.up_mode))
+            out.append(interpolate(feats, (h, w), self.up_mode))
         return torch.cat(tuple(out), dim=1)

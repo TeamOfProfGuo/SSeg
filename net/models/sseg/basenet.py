@@ -3,8 +3,9 @@ from addict import Dict
 
 import torch.nn as nn
 import torch.nn.functional as F
+
 from ..backbone import get_resnet18
-from ...nn import Simple_RGBD_Fuse, RGBD_Fuse_Block, PPE_Block, GAU_Fuse, Centerpiece, Decoder
+from ...nn import Fuse_Block, Centerpiece, Decoder
 
 __all__ = ['BaseNet', 'get_basenet']
 
@@ -14,10 +15,10 @@ class BaseNet(nn.Module):
         super(BaseNet, self).__init__()
 
         config = Dict({'ef': False, 'decoder': 'base', 'n_features': 128, 'rgbd_fuse': 'fuse',
-                       'sep_fuse': False, 'cp': 'none'})
-
-        self.sep_fuse = config.sep_fuse
+                       'sep_fuse': False, 'cp': 'psp'})
         
+        self.sep_fuse = config.sep_fuse
+
         # Get backbone
         self.rgb_base = get_resnet18(input_dim=4) if config.early_fusion else get_resnet18(input_dim=3)
         self.dep_base = get_resnet18(input_dim=1)
@@ -31,35 +32,37 @@ class BaseNet(nn.Module):
                                         self.dep_base.relu)  # [B, 64, h/2, w/2]
         self.rgb_inpool = self.rgb_base.maxpool              # [B, 64, h/4, w/4]
         self.dep_inpool = self.dep_base.maxpool              # [B, 64, h/4, w/4]
-
         for i in range(1, 5):
             self.add_module('rgb_layer%d' % i, self.rgb_base.__getattr__('layer%d' % i))
             self.add_module('dep_layer%d' % i, self.dep_base.__getattr__('layer%d' % i))
 
-        # Fuse modules
-        fuse_dict = {'simple': Simple_RGBD_Fuse, 'fuse': RGBD_Fuse_Block, 'gau': GAU_Fuse}
-        fuse_args = {'out_method': 'add', 'pre_module': 'pdl', 'mode': 'late',
+        # Fuse Block
+        fuse_feats = [64, 64, 128, 256, 512]
+        #  - fuse
+        fuse_args = {'out_method': 'add', 'pre_module': 'pca', 'mode': 'late',
                      'use_lamb': True, 'refine_dep': True}
+        #  - gau
+        # fuse_args = {'refine_rgb': True, 'refine_dep': False, 'gau_args': {'use_lamb': True}}
+        #  - gf
+        # fuse_args = {'info': 'psp(n); gau(b)'}
+        #  - pdlc
         # fuse_args = {}
+        for i in range(len(fuse_feats)):
+            self.add_module('fuse%d' % i, Fuse_Block(fuse_feats[i], config.rgbd_fuse, fuse_args))
         config.fuse_args = fuse_args
 
-        self.fuse0 = fuse_dict[config.rgbd_fuse]( 64, **fuse_args)
-        self.fuse1 = fuse_dict[config.rgbd_fuse]( 64, **fuse_args)
-        self.fuse2 = fuse_dict[config.rgbd_fuse](128, **fuse_args)
-        self.fuse3 = fuse_dict[config.rgbd_fuse](256, **fuse_args)
-        self.fuse4 = fuse_dict[config.rgbd_fuse](512, **fuse_args)
-
         # Centerpiece
-        # cp_args = {'size': (1, 2, 3, 6), 'up_mode': 'bilinear'} if config.cp != 'none' else {}
+        cp_feat = 'l' if config.sep_fuse else 'f'
+        # cp_args = {'size': (1, 3, 5, 7), 'up_mode': 'bilinear'} if config.cp != 'none' else {}
         cp_args = {'size': (1, 3, 5, 7), 'up_mode': 'nearest'} if config.cp != 'none' else {}
-        self.cp = Centerpiece(512, config.cp, cp_args)
+        self.cp = Centerpiece(config.cp, cp_feat, cp_args)
         config.cp_args = cp_args
 
         # Decoder
         #  - Base Net
         decoder_args = {'conv_module': 'cbr', 'level_fuse': 'max', 'feats': 'f', 'skip': False}
-        #  - Refine Net
-        # decoder_args = {'feats': 'f'}
+        #  - Refine Net & GF Net
+        # decoder_args = {'feats': cp_feat}
         self.decoder = Decoder(config.n_features, n_classes, config.decoder, decoder_args)
         config.decoder_args = decoder_args
 
@@ -91,15 +94,14 @@ class BaseNet(nn.Module):
         d4 = self.dep_layer4(d3)       # [B, 512, h/32, w/32]
         f4, d4 = self.fuse4(l4, d4)    # [B, 512, h/32, w/32]
 
-        if self.sep_fuse:
-            l4 = self.cp(l4)
-        else:
-            f4 = self.cp(f4)
-
-        # Decoder
         feats = Dict({'l1': l1, 'l2': l2, 'l3': l3, 'l4': l4,
                       'd1': d1, 'd2': d2, 'd3': d3, 'd4': d4,
                       'f1': f1, 'f2': f2, 'f3': f3, 'f4': f4})
+        
+        # Centerpiece
+        feats = self.cp(feats)
+
+        # Decoder
         out = self.decoder(feats)
 
         out = F.interpolate(out, (h, w), mode='bilinear', align_corners=True)

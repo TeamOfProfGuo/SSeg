@@ -3,26 +3,28 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from .gf import GF_Module, RC_Block
+
 __all__ = ['Decoder']
 
 class Decoder(nn.Module):
     def __init__(self, n_features, n_classes, decoder='base', decoder_args={}):
         super().__init__()
-        decoder_dict = {'base': Base_Decoder, 'refine': Refine_Decoder, 'pa': PA_Decoder}
+        decoder_dict = {'base': Base_Decoder, 'refine': Refine_Decoder, 'gf': GF_Decoder}
         self.decoder = decoder_dict[decoder](n_features, n_classes, **decoder_args)
     
     def forward(self, feats):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, n_features, n_classes, conv_module='cbr', level_fuse='simple', feats='f', skip=False):
+    def __init__(self, n_features, n_classes, conv_module='cbr', level_fuse='add', feats='f', skip=False):
         super().__init__()
 
         self.feats = feats
 
         self.lamb = nn.Parameter(torch.zeros(1)) if skip else 0
 
-        level_fuse_dict = {'simple': Simple_Level_Fuse, 'max': Max_Level_Fuse, 'gau': GAU_Block}
+        level_fuse_dict = {'add': Simple_Level_Fuse, 'max': Max_Level_Fuse, 'gau': GAU_Block}
         self.refine2 = level_fuse_dict[level_fuse](64)
         self.refine3 = level_fuse_dict[level_fuse](128)
         self.refine4 = level_fuse_dict[level_fuse](256)
@@ -72,26 +74,46 @@ class Base_Decoder(nn.Module):
 
         return self.out_conv(y1)
 
-class PA_Decoder(nn.Module):
-    def __init__(self, n_features, n_classes):
+class GF_Decoder(nn.Module):
+    def __init__(self, n_features: int, n_classes: int, feats='f'):
         super().__init__()
-
-        self.refine4 = FPA(512)
-        self.refine3 = GAU(512, 256)
-        self.refine2 = GAU(256, 128)
-        self.refine1 = GAU(128,  64)
-        
+        self.feats = feats
+        ch_list = [(64, 128), (128, 256), (256, 512)]
+        for i, (l, h) in enumerate(ch_list):
+            self.add_module('refine%d' % (i+1), GF_Refiner(l, h))
         self.out_conv = nn.Sequential(
-                CBR(64, n_features), CBR(n_features, n_features),
-                nn.Conv2d(n_features, n_classes, kernel_size=1, stride=1, padding=0, bias=True))
+            CBR(64, n_features), CBR(n_features, n_features),
+            nn.Conv2d(n_features, n_classes, kernel_size=1, stride=1, padding=0, bias=True)
+        )
 
     def forward(self, feats):
-        l1, l2, l3, l4 = feats.l1, feats.l2, feats.l3, feats.l4
-        feats = self.refine4(l4)         # [B, 512, h/32, w/32]
-        feats = self.refine3(feats, l3)  # [B, 256, h/16, w/16]
-        feats = self.refine2(feats, l2)  # [B, 128, h/8, w/8]
-        feats = self.refine1(feats, l1)  # [B, 64, h/4, w/4]
-        return self.out_conv(feats)
+        if self.feats == 'l':
+            x1, x2, x3, x4 = feats.l1, feats.l2, feats.l3, feats.l4
+        elif self.feats == 'd':
+            x1, x2, x3, x4 = feats.d1, feats.d2, feats.d3, feats.d4
+        elif self.feats == 'f':
+            x1, x2, x3, x4 = feats.f1, feats.f2, feats.f3, feats.f4
+        else:
+            raise ValueError('Invalid out feats: %s.' % self.feats)
+
+        x3 = self.refine3(x3, x4)   # [B, 256, h/16, w/16]
+        x2 = self.refine2(x2, x3)   # [B, 128, h/8, w/8]
+        x1 = self.refine1(x1, x2)   # [B, 64, h/4, w/4]
+        return self.out_conv(x1)
+
+class GF_Refiner(nn.Module):
+    def __init__(self, l: int, h: int):
+        super().__init__()
+        self.in_rcu1 = CBR(l, l) # RC_Block(l, unit_num=2)
+        self.in_rcu2 = CBR(h, l) # RC_Block(h, unit_num=2)
+        self.gf = GF_Module(l, h)
+        self.out_rcu = RC_Block(l, unit_num=1)
+
+    def forward(self, l, h):
+        l = self.in_rcu1(l)
+        h = self.in_rcu2(h)
+        out = self.gf(l, h)
+        return self.out_rcu(out[0])
 
 class Refine_Decoder(nn.Module):
     def __init__(self, n_features, n_classes, feats='f'):
@@ -134,150 +156,6 @@ class Refine_Decoder(nn.Module):
         y1 = self.refine1(y2, l1)   # [B, 256, h/4, w/4]
 
         return self.out_conv(y1)
-
-class FPA(nn.Module):
-    def __init__(self, channels=512):
-        """
-        Feature Pyramid Attention
-        :type channels: int
-        """
-        super().__init__()
-        channels_mid = channels // 4
-
-        self.channels_cond = channels
-
-        # Master branch
-        self.conv_master = nn.Conv2d(self.channels_cond, channels, kernel_size=1, bias=False)
-        self.bn_master = nn.BatchNorm2d(channels)
-
-        # Global pooling branch
-        self.conv_gpb = nn.Conv2d(self.channels_cond, channels, kernel_size=1, bias=False)
-        self.bn_gpb = nn.BatchNorm2d(channels)
-
-        # C333 because of the shape of last feature maps is (16, 16).
-        self.conv7x7_1 = nn.Conv2d(self.channels_cond, channels_mid, kernel_size=(7, 7), stride=2, padding=3, bias=False)
-        self.bn1_1 = nn.BatchNorm2d(channels_mid)
-        self.conv5x5_1 = nn.Conv2d(channels_mid, channels_mid, kernel_size=(5, 5), stride=2, padding=2, bias=False)
-        self.bn2_1 = nn.BatchNorm2d(channels_mid)
-        self.conv3x3_1 = nn.Conv2d(channels_mid, channels_mid, kernel_size=(3, 3), stride=2, padding=1, bias=False)
-        self.bn3_1 = nn.BatchNorm2d(channels_mid)
-
-        self.conv7x7_2 = nn.Conv2d(channels_mid, channels_mid, kernel_size=(7, 7), stride=1, padding=3, bias=False)
-        self.bn1_2 = nn.BatchNorm2d(channels_mid)
-        self.conv5x5_2 = nn.Conv2d(channels_mid, channels_mid, kernel_size=(5, 5), stride=1, padding=2, bias=False)
-        self.bn2_2 = nn.BatchNorm2d(channels_mid)
-        self.conv3x3_2 = nn.Conv2d(channels_mid, channels_mid, kernel_size=(3, 3), stride=1, padding=1, bias=False)
-        self.bn3_2 = nn.BatchNorm2d(channels_mid)
-
-        # Convolution Upsample
-        self.conv_upsample_3 = nn.ConvTranspose2d(channels_mid, channels_mid, kernel_size=4, stride=2, padding=1, bias=False)
-        self.bn_upsample_3 = nn.BatchNorm2d(channels_mid)
-
-        self.conv_upsample_2 = nn.ConvTranspose2d(channels_mid, channels_mid, kernel_size=4, stride=2, padding=1, bias=False)
-        self.bn_upsample_2 = nn.BatchNorm2d(channels_mid)
-
-        self.conv_upsample_1 = nn.ConvTranspose2d(channels_mid, channels, kernel_size=4, stride=2, padding=1, bias=False)
-        self.bn_upsample_1 = nn.BatchNorm2d(channels)
-
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        """
-        :param x: Shape: [b, 2048, h, w]
-        :return: out: Feature maps. Shape: [b, 2048, h, w]
-        """
-        # Master branch
-        x_master = self.conv_master(x)
-        x_master = self.bn_master(x_master)
-
-        # Global pooling branch
-        x_gpb = nn.AvgPool2d(x.shape[2:])(x).view(x.shape[0], self.channels_cond, 1, 1)
-        x_gpb = self.conv_gpb(x_gpb)
-        x_gpb = self.bn_gpb(x_gpb)
-
-        # Branch 1
-        x1_1 = self.conv7x7_1(x)
-        x1_1 = self.bn1_1(x1_1)
-        x1_1 = self.relu(x1_1)
-        x1_2 = self.conv7x7_2(x1_1)
-        x1_2 = self.bn1_2(x1_2)
-
-        # Branch 2
-        x2_1 = self.conv5x5_1(x1_1)
-        x2_1 = self.bn2_1(x2_1)
-        x2_1 = self.relu(x2_1)
-        x2_2 = self.conv5x5_2(x2_1)
-        x2_2 = self.bn2_2(x2_2)
-
-        # Branch 3
-        x3_1 = self.conv3x3_1(x2_1)
-        x3_1 = self.bn3_1(x3_1)
-        x3_1 = self.relu(x3_1)
-        x3_2 = self.conv3x3_2(x3_1)
-        x3_2 = self.bn3_2(x3_2)
-
-        # Merge branch 1 and 2
-        x3_upsample = self.relu(self.bn_upsample_3(self.conv_upsample_3(x3_2)))
-        x2_merge = self.relu(x2_2 + x3_upsample)
-        x2_upsample = self.relu(self.bn_upsample_2(self.conv_upsample_2(x2_merge)))
-        x1_merge = self.relu(x1_2 + x2_upsample)
-
-        x_master = x_master * self.relu(self.bn_upsample_1(self.conv_upsample_1(x1_merge)))
-
-        #
-        out = self.relu(x_master + x_gpb)
-
-        return out
-
-class GAU(nn.Module):
-    def __init__(self, channels_high, channels_low, upsample=True):
-        super(GAU, self).__init__()
-        # Global Attention Upsample
-        self.upsample = upsample
-        self.conv3x3 = nn.Conv2d(channels_low, channels_low, kernel_size=3, padding=1, bias=False)
-        self.bn_low = nn.BatchNorm2d(channels_low)
-
-        self.conv1x1 = nn.Conv2d(channels_high, channels_low, kernel_size=1, padding=0, bias=False)
-        self.bn_high = nn.BatchNorm2d(channels_low)
-
-        if upsample:
-            self.conv_upsample = nn.ConvTranspose2d(channels_high, channels_low, kernel_size=4, stride=2, padding=1, bias=False)
-            self.bn_upsample = nn.BatchNorm2d(channels_low)
-        else:
-            self.conv_reduction = nn.Conv2d(channels_high, channels_low, kernel_size=1, padding=0, bias=False)
-            self.bn_reduction = nn.BatchNorm2d(channels_low)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, fms_high, fms_low, fm_mask=None):
-        """
-        Use the high level features with abundant catagory information to weight the low level features with pixel
-        localization information. In the meantime, we further use mask feature maps with catagory-specific information
-        to localize the mask position.
-        :param fms_high: Features of high level. Tensor.
-        :param fms_low: Features of low level.  Tensor.
-        :param fm_mask:
-        :return: fms_att_upsample
-        """
-        b, c, h, w = fms_high.shape
-
-        fms_high_gp = nn.AvgPool2d(fms_high.shape[2:])(fms_high).view(len(fms_high), c, 1, 1)
-        fms_high_gp = self.conv1x1(fms_high_gp)
-        fms_high_gp = self.bn_high(fms_high_gp)
-        fms_high_gp = self.relu(fms_high_gp)
-
-        # fms_low_mask = torch.cat([fms_low, fm_mask], dim=1)
-        fms_low_mask = self.conv3x3(fms_low)
-        fms_low_mask = self.bn_low(fms_low_mask)
-
-        fms_att = fms_low_mask * fms_high_gp
-        if self.upsample:
-            out = self.relu(
-                self.bn_upsample(self.conv_upsample(fms_high)) + fms_att)
-        else:
-            out = self.relu(
-                self.bn_reduction(self.conv_reduction(fms_high)) + fms_att)
-
-        return out
 
 class LearnedUpUnit(nn.Module):
     def __init__(self, in_feats):

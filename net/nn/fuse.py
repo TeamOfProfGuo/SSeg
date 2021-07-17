@@ -3,9 +3,22 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-__all__ = ['Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse', 'PPE_Block', 'PPCE_Block']
+from .gf import GF_Module
+
+__all__ = ['Fuse_Block', 'Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse', 
+           'PPE_Block', 'PPCE_Block', 'PDLC_Fuse']
 
 PCA_FUSE_LAMB = False
+
+class Fuse_Block(nn.Module):
+    def __init__(self, in_feats, fb='simple', fuse_args={}):
+        super().__init__()
+        fuse_dict = {'simple': Simple_RGBD_Fuse, 'fuse': RGBD_Fuse_Block, 'gau': GAU_Fuse, 
+                     'gf': GF_Module, 'pdlc': PDLC_Fuse}
+        self.fb = fuse_dict[fb](in_feats, **fuse_args)
+        
+    def forward(self, rgb, dep):
+        return self.fb(rgb, dep)
 
 class Simple_RGBD_Fuse(nn.Module):
     def __init__(self, in_feats, **kwargs):
@@ -68,14 +81,98 @@ class RGBD_Fuse_Block(nn.Module):
         return out, (dep if self.refine_dep else d)
 
 class GAU_Fuse(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, refine_rgb=True, refine_dep=False, gau_args={}):
         super().__init__()
-        refine_rgb, refine_dep = False, True
-        self.rgb_ref = GAU_Block(in_feats) if refine_rgb else Identity_Block()
-        self.dep_ref = GAU_Block(in_feats) if refine_dep else Identity_Block()
+        self.rgb_ref = GAU_Block(in_feats, **gau_args) if refine_rgb else Identity_Block()
+        self.dep_ref = GAU_Block(in_feats, **gau_args) if refine_dep else Identity_Block()
 
     def forward(self, rgb, dep):
         return self.rgb_ref(rgb, dep), self.dep_ref(dep, rgb)
+
+class PDLC_Fuse(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        self.feats = in_feats
+        self.rgb_norm = nn.BatchNorm2d(in_feats)
+        self.dep_norm = nn.BatchNorm2d(in_feats)
+        self.att = PDLW_Block(2 * in_feats)
+        self.lamb = nn.Parameter(torch.zeros(1))
+        self.dep_conv = nn.Conv2d(in_feats, in_feats, kernel_size=1, bias=False)
+
+        # self.rgb_att = PDLW_Block(in_feats)
+        # self.dep_att = PDLW_Block(in_feats)
+        # self.rgb_conv = nn.Sequential(
+        #     nn.Conv2d(in_feats, in_feats, kernel_size=1, padding=0, bias=False),
+        #     nn.BatchNorm2d(in_feats),
+        #     nn.ReLU(inplace=True)
+        # )
+        # self.dep_conv = nn.Sequential(
+        #     nn.Conv2d(in_feats, in_feats, kernel_size=3, padding=1, bias=False),
+        #     nn.BatchNorm2d(in_feats)
+        # )
+
+    def forward(self, rgb, dep):
+        rgb = self.rgb_norm(rgb)
+        dep = self.dep_norm(dep)
+        w = self.att(torch.cat((rgb, dep), dim=1))
+        feats = w * torch.cat((rgb, dep), dim=1)
+        dep_out = feats[:, self.feats:, :, :]
+        rgb_out = feats[:, :self.feats, :, :] + self.lamb * self.dep_conv(dep_out)
+        return rgb_out, dep_out
+        # rgb_w = self.rgb_att(rgb)
+        # dep_w = self.dep_att(dep)
+        # dep_out = dep_w * dep
+        # rgb_out = rgb_w * rgb + self.rgb_conv(rgb_w) * self.dep_conv(dep_out)
+        # return rgb_out, dep_out
+
+class PDLW_Block(nn.Module):
+    def __init__(self, in_feats, pp_layer=4, descriptor=8, mid_feats=16):
+        super().__init__()
+        self.layer_size = pp_layer                  # l: pyramid layer num
+        self.feats_size = (4 ** pp_layer - 1) // 3  # f: feats for descritor
+        self.descriptor = descriptor                # d: descriptor num (for one channel)
+        print('[PDLW]: l = %d, d = %d, m = %d.' % (pp_layer, descriptor, mid_feats))
+
+        self.des = nn.Conv2d(self.feats_size, descriptor, kernel_size=1)
+        self.mlp = nn.Sequential(
+            nn.Linear(descriptor * in_feats, mid_feats, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_feats, in_feats),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        l, f, d = self.layer_size, self.feats_size, self.descriptor
+        pooling_pyramid = []
+        for i in range(l):
+            pooling_pyramid.append(F.adaptive_avg_pool2d(x, 2 ** i).view(b, c, 1, -1))
+        y = torch.cat(tuple(pooling_pyramid), dim=-1)   # [b,  c, 1, f]
+        y = y.reshape(b*c, f, 1, 1)                     # [bc, f, 1, 1]
+        y = self.des(y).view(b, c*d)                    # [bc, d, 1, 1] => [b, cd, 1, 1]
+        w = self.mlp(y).view(b, c, 1, 1)                # [b,  c, 1, 1] => [b, c, 1, 1]
+        return w
+
+class PDLD_Block(nn.Module):
+    def __init__(self, in_feats, pp_layer=4, descriptor=8):
+        super().__init__()
+        self.layer_size = pp_layer                  # l: pyramid layer num
+        self.feats_size = (4 ** pp_layer - 1) // 3  # f: feats for descritor
+        self.descriptor = descriptor                # d: descriptor num (for one channel)
+        print('[PDLD]: l = %d, d = %d.' % (pp_layer, descriptor))
+
+        self.des = nn.Conv2d(self.feats_size, descriptor, kernel_size=1)
+        
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        l, f, d = self.layer_size, self.feats_size, self.descriptor
+        pooling_pyramid = []
+        for i in range(l):
+            pooling_pyramid.append(F.adaptive_avg_pool2d(x, 2 ** i).view(b, c, 1, -1))
+        y = torch.cat(tuple(pooling_pyramid), dim=-1)   # [b,  c, 1, f]
+        y = y.reshape(b*c, f, 1, 1)                     # [bc, f, 1, 1]
+        des = self.des(y).view(b, c*d, 1, 1)            # [bc, d, 1, 1] => [b, cd, 1, 1]
+        return des
         
 class Identity_Block(nn.Module):
     def __init__(self):
@@ -85,31 +182,19 @@ class Identity_Block(nn.Module):
          return y
 
 class GAU_Block(nn.Module):
-    def __init__(self, in_feats, m=16):
+    def __init__(self, in_feats, use_lamb=True):
         super().__init__()
-        # 参考PAN x 为浅层网络，y为深层网络
-        if m == -1:
-            self.x_conv = nn.Sequential(nn.Conv2d(in_feats, in_feats, kernel_size=3, padding=1, bias=False),
-                                        nn.BatchNorm2d(in_feats))
-            self.y_gap = nn.AdaptiveAvgPool2d(1)
-            self.y_conv = nn.Sequential(nn.Conv2d(in_feats, in_feats, kernel_size=1, padding=0, bias=False),
-                                        nn.BatchNorm2d(in_feats),
-                                        nn.ReLU(inplace=True))
-        else:
-            mid_feats = m
-            self.x_conv = nn.Sequential(nn.Conv2d(in_feats, mid_feats, kernel_size=3, padding=1, bias=False),
-                                        nn.BatchNorm2d(mid_feats),
-                                        nn.ReLU(inplace=True),
-                                        nn.Conv2d(mid_feats, in_feats, kernel_size=3, padding=1, bias=False),
-                                        nn.BatchNorm2d(in_feats))
-
-            self.y_gap = nn.AdaptiveAvgPool2d(1)
-            self.y_conv = nn.Sequential(nn.Conv2d(in_feats, mid_feats, kernel_size=3, padding=1, bias=False),
-                                        nn.BatchNorm2d(mid_feats),
-                                        nn.ReLU(inplace=True),
-                                        nn.Conv2d(mid_feats, in_feats, kernel_size=3, padding=1, bias=False),
-                                        nn.BatchNorm2d(in_feats),
-                                        nn.ReLU(inplace=True))
+        
+        self.lamb = nn.Parameter(torch.ones(1)) if use_lamb else 1
+        self.use_lamb = use_lamb
+    
+        # 参考PAN x 为浅层网络，y为深层网络 => x(dep), y(rgb)
+        self.x_conv = nn.Sequential(nn.Conv2d(in_feats, in_feats, kernel_size=3, padding=1, bias=False),
+                                    nn.BatchNorm2d(in_feats))
+        self.y_gap = nn.AdaptiveAvgPool2d(1)
+        self.y_conv = nn.Sequential(nn.Conv2d(in_feats, in_feats, kernel_size=1, padding=0, bias=False),
+                                    nn.BatchNorm2d(in_feats),
+                                    nn.ReLU(inplace=True))
 
     def forward(self, y, x):
         x1 = self.x_conv(x)      # [B, c, h, w]
@@ -117,9 +202,8 @@ class GAU_Block(nn.Module):
         y1 = self.y_gap(y)       # [B, c, 1, 1]
         y1 = self.y_conv(y1)     # [B, c, 1, 1]
 
-        out = y1*x1 + y
+        out = y + self.lamb * (y1 * x1)
         return out
-
 
 class PP_Block(nn.Module):
     def __init__(self, in_feats, pp_layer=3, reduction=16, mid_feats=32):
