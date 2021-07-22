@@ -3,55 +3,36 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from .gf import GF_Module, RC_Block
+from net.nn.gf import *
+from net.utils.feat_op import *
 
 __all__ = ['Decoder']
 
 class Decoder(nn.Module):
-    def __init__(self, n_features, n_classes, decoder='base', decoder_args={}):
+    def __init__(self, decoder_feat, n_classes, decoder='base', decoder_args={}):
         super().__init__()
         decoder_dict = {'base': Base_Decoder, 'refine': Refine_Decoder, 'gf': GF_Decoder}
-        self.decoder = decoder_dict[decoder](n_features, n_classes, **decoder_args)
+        self.decoder = decoder_dict[decoder](decoder_feat, n_classes, **decoder_args)
     
     def forward(self, feats):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, n_features, n_classes, conv_module='cbr', level_fuse='add', feats='f', skip=False):
+    def __init__(self, decoder_feat, n_classes, conv_module='cbr', level_fuse='add', feats='f', rf_conv=(True, False)):
         super().__init__()
 
         self.feats = feats
+        # level_fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add,'max': Max_Level_Fuse, 'gau': GAU_Block}
 
-        self.lamb = nn.Parameter(torch.zeros(1)) if skip else 0
+        # Refine Blocks
+        for i in range(len(decoder_feat['level'])):
+            self.add_module('refine%d' % i, Base_Level_Fuse(decoder_feat['level'][i], level_fuse, rf_conv))
 
-        level_fuse_dict = {'add': Simple_Level_Fuse, 'max': Max_Level_Fuse, 'gau': GAU_Block}
-        self.refine2 = level_fuse_dict[level_fuse](64)
-        self.refine3 = level_fuse_dict[level_fuse](128)
-        self.refine4 = level_fuse_dict[level_fuse](256)
+        # Upsample Blocks
+        for i in range(len(decoder_feat['level'])):
+            self.add_module('up%d' % i, up_block(decoder_feat['level'][i], conv_module))
 
-        if conv_module == 'rcu':
-            self.up2 = nn.Sequential(ResidualConvUnit(128), LearnedUpUnit(128, 64))
-            self.up3 = nn.Sequential(ResidualConvUnit(256), LearnedUpUnit(256, 128))
-            self.up4 = nn.Sequential(ResidualConvUnit(512), LearnedUpUnit(512, 256))
-            self.out_conv = nn.Sequential(
-                ResidualConvUnit(64), ResidualConvUnit(64),
-                nn.Conv2d(n_features, n_classes, kernel_size=1, stride=1, padding=0, bias=True))
-        elif conv_module == 'cbr':
-            self.up2 = nn.Sequential(CBR(128,  64), LearnedUpUnit(64))
-            self.up3 = nn.Sequential(CBR(256, 128), LearnedUpUnit(128))
-            self.up4 = nn.Sequential(CBR(512, 256), LearnedUpUnit(256))
-            self.out_conv = nn.Sequential(
-                CBR(64, n_features), CBR(n_features, n_features),
-                nn.Conv2d(n_features, n_classes, kernel_size=1, stride=1, padding=0, bias=True))
-        elif conv_module == 'bb':
-            self.up2 = nn.Sequential(BasicBlock(128, 128), BasicBlock(128,  64, upsample=True))
-            self.up3 = nn.Sequential(BasicBlock(256, 256), BasicBlock(256, 128, upsample=True))
-            self.up4 = nn.Sequential(BasicBlock(512, 512), BasicBlock(512, 256, upsample=True))
-            self.out_conv = nn.Sequential(
-                BasicBlock(64, n_features, upsample=True), BasicBlock(n_features, n_features),
-                nn.Conv2d(n_features, n_classes, kernel_size=1, stride=1, padding=0, bias=True))
-        else:
-            raise ValueError('Invalid conv module: %s.' % conv_module)
+        self.out_conv = out_block(min(decoder_feat['level']), decoder_feat['final'], n_classes, conv_module)
 
     def forward(self, feats):
         if self.feats == 'l':
@@ -63,14 +44,52 @@ class Base_Decoder(nn.Module):
         else:
             raise ValueError('Invalid out feats: %s.' % self.feats)
 
-        y4 = self.up4(x4)          # [B, 256, h/16, w/16]
-        y3 = self.refine4(y4, x3) + self.lamb * feats.l3
+        feats = self.refine0(self.up0(x4), x3)
+        feats = self.refine1(self.up1(feats), x2)
+        feats = self.refine2(self.up2(feats), x1)
+        return self.out_conv(feats)
 
-        y3 = self.up3(y3)          # [B, 128, h/8, w/8]
-        y2 = self.refine3(y3, x2) + self.lamb * feats.l2
+class Refine_Decoder(nn.Module):
+    def __init__(self, decoder_feat, n_classes, feats='f'):
+        super().__init__()
 
-        y2 = self.up2(y2)          # [B, 64, h/4, w/4]
-        y1 = self.refine2(y2, x1) + self.lamb * feats.l1
+        self.feats = feats
+        n_features = decoder_feat['final']
+        feats_list = decoder_feat['level']
+
+        self.refine_conv1 = nn.Conv2d(feats_list[2], n_features, kernel_size=3, stride=1, padding=1, bias=False)
+        self.refine_conv2 = nn.Conv2d(feats_list[1], n_features, kernel_size=3, stride=1, padding=1, bias=False)
+        self.refine_conv3 = nn.Conv2d(feats_list[0], n_features, kernel_size=3, stride=1, padding=1, bias=False)
+        self.refine_conv4 = nn.Conv2d(2*max(feats_list), 2*n_features, kernel_size=3, stride=1, padding=1, bias=False)
+
+        self.refine1 = RefineNetBlock(n_features, (n_features, 8), (n_features, 4))
+        self.refine2 = RefineNetBlock(n_features, (n_features, 16), (n_features, 8))
+        self.refine3 = RefineNetBlock(n_features, (2*n_features, 32), (n_features, 16))
+        self.refine4 = RefineNetBlock(2*n_features, (2*n_features, 32))
+
+        self.out_conv = nn.Sequential(
+            ResidualConvUnit(n_features), ResidualConvUnit(n_features),
+            nn.Conv2d(n_features, n_classes, kernel_size=1, stride=1, padding=0, bias=True))
+
+    def forward(self, feats):
+        if self.feats == 'l':
+            x1, x2, x3, x4 = feats.l1, feats.l2, feats.l3, feats.l4
+        elif self.feats == 'd':
+            x1, x2, x3, x4 = feats.d1, feats.d2, feats.d3, feats.d4
+        elif self.feats == 'f':
+            x1, x2, x3, x4 = feats.f1, feats.f2, feats.f3, feats.f4
+        else:
+            raise ValueError('Invalid out feats: %s.' % self.feats)
+
+        x1 = self.refine_conv1(x1)
+        x2 = self.refine_conv2(x2)
+        x3 = self.refine_conv3(x3)
+        x4 = self.refine_conv4(x4)
+
+        y4 = self.refine4(x4)       # [B, 512, h/32, w/32]
+        y3 = self.refine3(y4, x3)   # [B, 256, h/16, w/16]
+        y2 = self.refine2(y3, x2)   # [B, 256, h/8, w/8]
+        y1 = self.refine1(y2, x1)   # [B, 256, h/4, w/4]
 
         return self.out_conv(y1)
 
@@ -115,48 +134,6 @@ class GF_Refiner(nn.Module):
         out = self.gf(l, h)
         return self.out_rcu(out[0])
 
-class Refine_Decoder(nn.Module):
-    def __init__(self, n_features, n_classes, feats='f'):
-        super().__init__()
-
-        self.feats = feats
-
-        self.refine_conv1 = nn.Conv2d( 64, n_features, kernel_size=3, stride=1, padding=1, bias=False)
-        self.refine_conv2 = nn.Conv2d(128, n_features, kernel_size=3, stride=1, padding=1, bias=False)
-        self.refine_conv3 = nn.Conv2d(256, n_features, kernel_size=3, stride=1, padding=1, bias=False)
-        self.refine_conv4 = nn.Conv2d(512, 2*n_features, kernel_size=3, stride=1, padding=1, bias=False)
-
-        self.refine4 = RefineNetBlock(2*n_features, (2*n_features, 32))
-        self.refine3 = RefineNetBlock(n_features, (2*n_features, 32), (n_features, 16))
-        self.refine2 = RefineNetBlock(n_features, (n_features, 16), (n_features, 8))
-        self.refine1 = RefineNetBlock(n_features, (n_features, 8), (n_features, 4))
-
-        self.out_conv = nn.Sequential(
-            ResidualConvUnit(n_features), ResidualConvUnit(n_features),
-            nn.Conv2d(n_features, n_classes, kernel_size=1, stride=1, padding=0, bias=True))
-
-    def forward(self, feats):
-        if self.feats == 'l':
-            x1, x2, x3, x4 = feats.l1, feats.l2, feats.l3, feats.l4
-        elif self.feats == 'd':
-            x1, x2, x3, x4 = feats.d1, feats.d2, feats.d3, feats.d4
-        elif self.feats == 'f':
-            x1, x2, x3, x4 = feats.f1, feats.f2, feats.f3, feats.f4
-        else:
-            raise ValueError('Invalid out feats: %s.' % self.feats)
-
-        l1 = self.refine_conv1(x1)
-        l2 = self.refine_conv2(x2)
-        l3 = self.refine_conv3(x3)
-        l4 = self.refine_conv4(x4)
-
-        y4 = self.refine4(l4)       # [B, 512, h/32, w/32]
-        y3 = self.refine3(y4, l3)   # [B, 256, h/16, w/16]
-        y2 = self.refine2(y3, l2)   # [B, 256, h/8, w/8]
-        y1 = self.refine1(y2, l1)   # [B, 256, h/4, w/4]
-
-        return self.out_conv(y1)
-
 class LearnedUpUnit(nn.Module):
     def __init__(self, in_feats):
         super().__init__()
@@ -175,12 +152,34 @@ class Simple_Level_Fuse(nn.Module):
     def forward(self, x, y):
         return x+y
 
+class Norm_Add(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        self.norm1 = nn.BatchNorm2d(in_feats)
+        self.norm2 = nn.BatchNorm2d(in_feats)
+        
+    def forward(self, x, y):
+        return self.norm1(x) + self.norm2(y)
+
 class Max_Level_Fuse(nn.Module):
     def __init__(self, in_feats):
         super().__init__()
         
     def forward(self, x, y):
         return torch.max(x, y)
+
+class Base_Level_Fuse(nn.Module):
+    def __init__(self, in_feats, fuse_mode='max', conv_flag=(True, False)):
+        super().__init__()
+        self.conv_flag = conv_flag
+        fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse}
+        self.fuse = fuse_dict[fuse_mode](in_feats)
+        self.rbb0 = ResidualBasicBlock(in_feats) if conv_flag[0] else nn.Identity()
+        self.rbb1 = ResidualBasicBlock(in_feats) if conv_flag[1] else nn.Identity()
+    
+    def forward(self, x, y):
+        y = self.rbb0(y)    # Refine feats from backbone
+        return self.rbb1(self.fuse(x, y))
 
 class GAU_Block(nn.Module):
     def __init__(self, in_feats, r=16):

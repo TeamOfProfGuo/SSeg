@@ -1,5 +1,5 @@
 
-model: basenet
+model: prl_basenet
 backbone: resnet18
 dataset: nyud
 

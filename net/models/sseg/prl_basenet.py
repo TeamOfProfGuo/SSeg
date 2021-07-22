@@ -7,15 +7,15 @@ import torch.nn.functional as F
 from ..backbone import get_resnet18
 from ...nn import Fuse_Block, Centerpiece, Decoder
 
-__all__ = ['BaseNet', 'get_basenet']
+__all__ = ['Prl_BaseNet', 'get_prl_basenet']
 
-class BaseNet(nn.Module):
+class Prl_BaseNet(nn.Module):
 
-    def __init__(self, n_classes=21, backbone='resnet18', pretrained=True, root='./encoding/models/pretrain'):
-        super(BaseNet, self).__init__()
+    def __init__(self, n_classes=21, backbone='resnet18', pretrained=True, root='./encoding/models/pretrain', setting={}):
+        super().__init__()
 
-        config = Dict({'ef': False, 'decoder': 'base', 'n_features': 128, 'rgbd_fuse': 'fuse',
-                       'sep_fuse': False, 'cp': 'none'})
+        setting = Dict(setting)
+        config = setting.general
         
         self.sep_fuse = config.sep_fuse
 
@@ -38,38 +38,22 @@ class BaseNet(nn.Module):
 
         # Fuse Block
         fuse_feats = [64, 64, 128, 256, 512]
-        #  - simple & pdlc
-        fuse_args = {}
-        #  - fuse
-        fuse_args = {'out_method': 'add', 'pre_module': 'pca', 'mode': 'late',
-                     'use_lamb': True, 'refine_dep': False}
-        #  - gau
-        # fuse_args = {'refine_rgb': True, 'refine_dep': True, 'gau_args': {'use_lamb': True}}
-        #  - gf
-        # fuse_args = {'info': 'psp(n); gau(b)'}
+        fuse_args = setting.fuse_args
         for i in range(len(fuse_feats)):
             self.add_module('fuse%d' % i, Fuse_Block(fuse_feats[i], config.rgbd_fuse, fuse_args))
         config.fuse_args = fuse_args
 
         # Centerpiece
         cp_feat = 'l' if config.sep_fuse else 'f'
-        # cp_args = {'size': (1, 3, 5, 7), 'up_mode': 'bilinear', 'keep_feats': False} if config.cp != 'none' else {}
-        cp_args = {'size': (1, 3, 5, 7), 'up_mode': 'nearest', 'keep_feats': False} if config.cp != 'none' else {}
+        cp_args = setting.cp_args if config.cp != 'none' else {}
         self.cp = Centerpiece(config.cp, cp_feat, cp_args)
         config.cp_args = cp_args
 
-        # Decoder
-        #  - Without cp
-        decoder_feat = {'level': [256, 128, 64], 'final': config.n_features}
-        #  - With cp
-        # decoder_feat = {'level': [512, 256, 128], 'final': config.n_features}
-    
-        #  - Base Net
-        decoder_args = {'conv_module': 'rbb', 'level_fuse': 'add', 'feats': 'f', 'rf_conv': (False, False)}
-        #  - Refine Net & GF Net
-        # decoder_args = {'feats': cp_feat}
-        
+        # Decoder feats
+        decoder_feat = setting.decoder_feat
+        decoder_args = setting.decoder_args        
         self.decoder = Decoder(decoder_feat, n_classes, config.decoder, decoder_args)
+        config.decoder_feat = decoder_feat
         config.decoder_args = decoder_args
 
         self.config = config
@@ -113,7 +97,7 @@ class BaseNet(nn.Module):
         out = F.interpolate(out, (h, w), mode='bilinear', align_corners=True)
         return out
 
-def get_basenet(dataset='nyud', backbone='resnet18', pretrained=True, root='./encoding/models/pretrain/'):
+def get_prl_basenet(dataset='nyud', backbone='resnet18', pretrained=True, root='./encoding/models/pretrain/', config={}):
     from ...datasets import datasets
-    model = BaseNet(datasets[dataset.lower()].NUM_CLASS, backbone=backbone, pretrained=pretrained, root=root)
+    model = Prl_BaseNet(datasets[dataset.lower()].NUM_CLASS, backbone=backbone, pretrained=pretrained, root=root, setting=config)
     return model

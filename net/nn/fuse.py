@@ -29,17 +29,19 @@ class Simple_RGBD_Fuse(nn.Module):
 
 class RGBD_Fuse_Block(nn.Module):
     def __init__(self, in_feats, out_method='max', pre_module='pca', mode='late', pre_setting={},
-                    use_lamb=False, refine_dep=True):
+                    use_lamb=True, refine_dep=False):
         super().__init__()
         module_dict = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 
                        'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
-                       'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block}
+                       'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM}
         self.mode = mode
         self.module = module_dict[pre_module]
         self.out_method = out_method
         self.use_lamb = use_lamb
         self.refine_dep = refine_dep
         self.lamb = nn.Parameter(torch.zeros(1))
+        self.dep_bn = nn.BatchNorm2d(in_feats)
+        self.gamma = nn.Parameter(torch.zeros(1))
         print('[RGB-D Fuse]: use_lamb =', self.use_lamb)
         if mode == 'late':
             self.rgb_pre = self.module(in_feats, **pre_setting)
@@ -59,7 +61,6 @@ class RGBD_Fuse_Block(nn.Module):
             rgb = self.rgb_pre(rgb)
             dep = self.dep_pre(dep)
             if self.out_method == 'add':
-                # (1 - self.lamb) * 
                 out = rgb + self.lamb * dep if self.use_lamb else rgb + dep
             elif self.out_method == 'max':
                 out = torch.max(rgb, dep)
@@ -79,15 +80,6 @@ class RGBD_Fuse_Block(nn.Module):
             raise ValueError('Invalid Fuse Mode: ' + str(self.mode))
 
         return out, (dep if self.refine_dep else d)
-
-class GAU_Fuse(nn.Module):
-    def __init__(self, in_feats, refine_rgb=True, refine_dep=False, gau_args={}):
-        super().__init__()
-        self.rgb_ref = GAU_Block(in_feats, **gau_args) if refine_rgb else Identity_Block()
-        self.dep_ref = GAU_Block(in_feats, **gau_args) if refine_dep else Identity_Block()
-
-    def forward(self, rgb, dep):
-        return self.rgb_ref(rgb, dep), self.dep_ref(dep, rgb)
 
 class PDLC_Fuse(nn.Module):
     def __init__(self, in_feats):
@@ -124,6 +116,13 @@ class PDLC_Fuse(nn.Module):
         # dep_out = dep_w * dep
         # rgb_out = rgb_w * rgb + self.rgb_conv(rgb_w) * self.dep_conv(dep_out)
         # return rgb_out, dep_out
+
+class Identity_ARM(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+    
+    def forward(self, x):
+        return x
 
 class PDLW_Block(nn.Module):
     def __init__(self, in_feats, pp_layer=4, descriptor=8, mid_feats=16):
@@ -173,7 +172,16 @@ class PDLD_Block(nn.Module):
         y = y.reshape(b*c, f, 1, 1)                     # [bc, f, 1, 1]
         des = self.des(y).view(b, c*d, 1, 1)            # [bc, d, 1, 1] => [b, cd, 1, 1]
         return des
-        
+
+class GAU_Fuse(nn.Module):
+    def __init__(self, in_feats, refine_rgb=True, refine_dep=False, gau_args={}):
+        super().__init__()
+        self.rgb_ref = GAU_Block(in_feats, **gau_args) if refine_rgb else Identity_Block()
+        self.dep_ref = GAU_Block(in_feats, **gau_args) if refine_dep else Identity_Block()
+
+    def forward(self, rgb, dep):
+        return self.rgb_ref(rgb, dep), self.dep_ref(dep, rgb)
+
 class Identity_Block(nn.Module):
     def __init__(self):
         super().__init__()
@@ -182,10 +190,10 @@ class Identity_Block(nn.Module):
          return y
 
 class GAU_Block(nn.Module):
-    def __init__(self, in_feats, use_lamb=True):
+    def __init__(self, in_feats, use_lamb=False):
         super().__init__()
         
-        self.lamb = nn.Parameter(torch.ones(1)) if use_lamb else 1
+        self.lamb = nn.Parameter(torch.zeros(1)) if use_lamb else 1
         self.use_lamb = use_lamb
     
         # 参考PAN x 为浅层网络，y为深层网络 => x(dep), y(rgb)
@@ -197,12 +205,9 @@ class GAU_Block(nn.Module):
                                     nn.ReLU(inplace=True))
 
     def forward(self, y, x):
-        x1 = self.x_conv(x)      # [B, c, h, w]
-
-        y1 = self.y_gap(y)       # [B, c, 1, 1]
-        y1 = self.y_conv(y1)     # [B, c, 1, 1]
-
-        out = y + self.lamb * (y1 * x1)
+        x = self.x_conv(x)                  # [B, c, h, w]
+        w = self.y_conv(self.y_gap(y))      # [B, c, 1, 1]
+        out = y + self.lamb * (w * x)
         return out
 
 class PP_Block(nn.Module):

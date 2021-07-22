@@ -30,20 +30,27 @@ class Identity_Module(nn.Module):
         return x
 
 class PSP_Module(nn.Module):
-    def __init__(self, in_feats, size=(1, 3, 5, 7), up_mode='nearest'):
+    def __init__(self, in_feats, size=(1, 3, 5, 7), up_mode='nearest', keep_feats=True):
         super().__init__()
         self.size = size
         self.up_mode = up_mode
-        self.rf_conv = nn.Sequential(
-            nn.Conv2d(in_feats, in_feats//2, kernel_size=1),
-            nn.BatchNorm2d(in_feats//2),
-            nn.ReLU(inplace=True)
-        )
+
+        if keep_feats:
+            out_feats = in_feats
+            self.rf_conv = nn.Sequential(
+                nn.Conv2d(in_feats, out_feats//2, kernel_size=1),
+                nn.BatchNorm2d(out_feats//2),
+                nn.ReLU(inplace=True)
+            )
+        else:
+            out_feats = 2 * in_feats
+            self.rf_conv = nn.Identity()
+
         for s in size:
             self.add_module('pool%d' % s, nn.Sequential(
                 nn.AdaptiveAvgPool2d(s),
-                nn.Conv2d(in_feats, in_feats//8, kernel_size=1),
-                nn.BatchNorm2d(in_feats//8),
+                nn.Conv2d(in_feats, out_feats//8, kernel_size=1),
+                nn.BatchNorm2d(out_feats//8),
                 nn.ReLU(inplace=True)
             ))
         
