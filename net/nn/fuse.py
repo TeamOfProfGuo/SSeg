@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from .gf import GF_Module
+from net.utils.feat_op import interpolate
 
 __all__ = ['Fuse_Block', 'Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse', 
            'PPE_Block', 'PPCE_Block', 'PDLC_Fuse']
@@ -14,7 +15,7 @@ class Fuse_Block(nn.Module):
     def __init__(self, in_feats, fb='simple', fuse_args={}):
         super().__init__()
         fuse_dict = {'simple': Simple_RGBD_Fuse, 'fuse': RGBD_Fuse_Block, 'gau': GAU_Fuse, 
-                     'gf': GF_Module, 'pdlc': PDLC_Fuse}
+                     'gf': GF_Module, 'pdlc': PDLC_Fuse, 'lgc': LGC_Fuse, 'cc': CC_Fuse}
         self.fb = fuse_dict[fb](in_feats, **fuse_args)
         
     def forward(self, rgb, dep):
@@ -27,20 +28,30 @@ class Simple_RGBD_Fuse(nn.Module):
     def forward(self, x, d):
         return x+d, d
 
+class CC3_Block(nn.Sequential):
+    def __init__(self, in_feats):
+        super().__init__()
+        self.add_module('cc', nn.Sequential(
+            nn.Conv2d(2 * in_feats, in_feats, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.ReLU(inplace=True)
+        ))
+
 class RGBD_Fuse_Block(nn.Module):
-    def __init__(self, in_feats, out_method='max', pre_module='pca', mode='late', pre_setting={},
+    def __init__(self, in_feats, out_method='add', pre_module='pca', mode='late', pre_setting={},
                     use_lamb=True, refine_dep=False):
         super().__init__()
         module_dict = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 
                        'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
-                       'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM}
+                       'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM,
+                       'lgc': LGC_Block, 'pgc': PGC_Block, 'gam': GAM_Block, 'agam': AGAM_Block,
+                       'bgam': BGAM_Block, 'cgam': CGAM_Block, 'dgam': DGAM_Block}
         self.mode = mode
         self.module = module_dict[pre_module]
         self.out_method = out_method
         self.use_lamb = use_lamb
         self.refine_dep = refine_dep
         self.lamb = nn.Parameter(torch.zeros(1))
-        self.dep_bn = nn.BatchNorm2d(in_feats)
+        # self.dep_bn = nn.BatchNorm2d(in_feats)
         self.gamma = nn.Parameter(torch.zeros(1))
         print('[RGB-D Fuse]: use_lamb =', self.use_lamb)
         if mode == 'late':
@@ -80,6 +91,35 @@ class RGBD_Fuse_Block(nn.Module):
             raise ValueError('Invalid Fuse Mode: ' + str(self.mode))
 
         return out, (dep if self.refine_dep else d)
+
+class CC_Fuse(nn.Module):
+    def __init__(self, in_feats, mode='rsp', att_module='pdl', att_setting={}, refine_dep=False):
+        super().__init__()
+        module_dict = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 
+                       'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
+                       'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM,
+                       'lgc': LGC_Block, 'pgc': PGC_Block, 'gam': GAM_Block, 'agam': AGAM_Block,
+                       'bgam': BGAM_Block, 'cgam': CGAM_Block, 'dgam': DGAM_Block}
+        self.mode = mode
+        self.refine_dep = refine_dep
+        self.cc1 = CC3_Block(in_feats)
+        self.cc2 = CC3_Block(in_feats) if refine_dep else None
+        if mode == 'rsp':
+            self.rgb_pre = module_dict[att_module](in_feats, **att_setting)
+            self.dep_pre = module_dict[att_module](in_feats, **att_setting)
+        else:
+            self.pre = module_dict[att_module](2 * in_feats, **att_setting)
+    
+    def forward(self, rgb, dep):
+        d = dep.clone()
+        if self.mode == 'rsp':
+            rgb = self.rgb_pre(rgb)
+            dep = self.dep_pre(dep)
+            feats = torch.cat((rgb, dep), dim=1)
+        else:
+            feats = torch.cat((rgb, dep), dim=1)
+            feats = self.pre(feats)
+        return self.cc1(feats), (self.cc2(feats) if self.refine_dep else d)
 
 class PDLC_Fuse(nn.Module):
     def __init__(self, in_feats):
@@ -125,7 +165,7 @@ class Identity_ARM(nn.Module):
         return x
 
 class PDLW_Block(nn.Module):
-    def __init__(self, in_feats, pp_layer=4, descriptor=8, mid_feats=16):
+    def __init__(self, in_feats, pp_layer=4, descriptor=8, mid_feats=16, act_layer=nn.Sigmoid()):
         super().__init__()
         self.layer_size = pp_layer                  # l: pyramid layer num
         self.feats_size = (4 ** pp_layer - 1) // 3  # f: feats for descritor
@@ -137,7 +177,7 @@ class PDLW_Block(nn.Module):
             nn.Linear(descriptor * in_feats, mid_feats, bias=False),
             nn.ReLU(inplace=True),
             nn.Linear(mid_feats, in_feats),
-            nn.Sigmoid()
+            act_layer
         )
         
     def forward(self, x):
@@ -181,6 +221,32 @@ class GAU_Fuse(nn.Module):
 
     def forward(self, rgb, dep):
         return self.rgb_ref(rgb, dep), self.dep_ref(dep, rgb)
+
+class LGC_Fuse(nn.Module):
+    def __init__(self, in_feats, refine_rgb=True, refine_dep=False):
+        super().__init__()
+        self.refine_rgb = refine_rgb
+        self.refine_dep = refine_dep
+        self.lamb1 = nn.Parameter(torch.zeros(1))
+        self.lamb2 = nn.Parameter(torch.zeros(1))
+        self.rgb_conv = nn.Sequential(
+            nn.Conv2d(in_feats, 1, kernel_size=1, bias=False),
+            nn.ReLU(inplace=True)
+        )
+        self.dep_conv = nn.Sequential(
+            nn.Conv2d(in_feats, 1, kernel_size=1, bias=False),
+            nn.ReLU(inplace=True)
+        )
+        
+    def forward(self, rgb, dep):
+        rgb_out, dep_out = rgb.clone(), dep.clone()
+        if self.refine_rgb:
+            dep_context = self.dep_conv(dep)
+            rgb_out = rgb + self.lamb1 * dep_context
+        if self.refine_dep:
+            rgb_context = self.rgb_conv(rgb)
+            dep_out = dep + self.lamb2 * rgb_context
+        return rgb_out, dep_out
 
 class Identity_Block(nn.Module):
     def __init__(self):
@@ -482,6 +548,25 @@ class PSC_Block(nn.Module):
         
         return paw * x
 
+class PSCW_Block(nn.Module):
+    def __init__(self, in_feats, pp_size=(1, 2, 4, 8), act_layer=nn.Sigmoid()):
+        super().__init__()
+        self.pp_size = pp_size
+        self.att_conv = nn.Sequential(
+            nn.Conv2d(len(pp_size), 1, kernel_size=1),
+            act_layer
+        )
+
+    def forward(self, x):
+        b, _, h, w = x.size()
+        sp_layers = []
+        for i in self.pp_size:
+            l = torch.mean(F.adaptive_avg_pool2d(x, i), dim=1).view(b, 1, i, i)
+            sp_layers.append(F.interpolate(l, size=max(self.pp_size)))
+        y = torch.cat(tuple(sp_layers), dim=1)
+        paw = F.interpolate(self.att_conv(y), size=(h, w), mode='bilinear', align_corners=False)
+        return paw
+
 class PCA_Block(nn.Module):
     def __init__(self, in_feats, mode='pc'):
         super().__init__()
@@ -511,6 +596,178 @@ class PCA_Block(nn.Module):
         else:
             raise ValueError('Invalid PCA mode %s.' % self.mode)
         return y
+
+class LGC_Block(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        self.lamb = nn.Parameter(torch.zeros(1))
+        self.att_conv = nn.Sequential(
+            nn.Conv2d(in_feats, 1, kernel_size=1, bias=False),
+            nn.ReLU(inplace=True)
+            # nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        return x + self.lamb * self.att_conv(x)
+
+class PGC_Block(nn.Module):
+    def __init__(self, in_feats, pp_size=(1, 3, 5, 7), act='sigmoid', conv='own', out='add'):
+        super().__init__()
+        self.out = out
+        self.conv = conv
+        self.pp_size = pp_size
+        self.lamb = nn.Parameter(torch.zeros(1))
+        self.gc_conv = nn.Conv2d(in_feats, 1, kernel_size=1, bias=False)
+        for s in pp_size:
+            if conv == 'own':
+                self.add_module('pc%d' % s, nn.Sequential(
+                    nn.AdaptiveAvgPool2d(s),
+                    nn.Conv2d(in_feats, 1, kernel_size=1, bias=False)
+                ))
+            else:
+                self.add_module('pool%d' % s, nn.AdaptiveAvgPool2d(s))
+        self.att_conv = nn.Sequential(
+            nn.Conv2d(len(pp_size)+1, 1, kernel_size=1),
+            nn.Sigmoid() if act == 'sigmoid' else nn.ReLU(inplace=True)
+        )
+    
+    def forward(self, x):
+        _, _, h, w = x.size()
+        gc_feats = [self.gc_conv(x)]
+        for s in self.pp_size:
+            if self.conv == 'own':
+                layer = self.__getattr__('pc%d' % s)(x)
+            else:
+                layer = self.gc_conv(self.__getattr__('pool%d' % s)(x))
+            gc_feats.append(interpolate(layer, (h, w), 'nearest'))
+        pgc_map = self.att_conv(torch.cat(tuple(gc_feats), dim=1))
+        return (x + self.lamb * pgc_map) if self.out == 'add' else (pgc_map * x)
+
+class PGCW_Block(nn.Module):
+    def __init__(self, in_feats, pp_size=(1, 3, 5, 7), act_layer=nn.Sigmoid()):
+        super().__init__()
+        self.pp_size = pp_size
+        self.gc_conv = nn.Conv2d(in_feats, 1, kernel_size=1, bias=False)
+        for s in pp_size:
+            self.add_module('pc%d' % s, nn.Sequential(
+                nn.AdaptiveAvgPool2d(s),
+                nn.Conv2d(in_feats, 1, kernel_size=1, bias=False)
+            ))
+        self.att_conv = nn.Sequential(
+            nn.Conv2d(len(pp_size)+1, 1, kernel_size=1),
+            act_layer
+        )
+    
+    def forward(self, x):
+        _, _, h, w = x.size()
+        gc_feats = [self.gc_conv(x)]
+        for s in self.pp_size:
+            layer = self.__getattr__('pc%d' % s)(x)
+            gc_feats.append(interpolate(layer, (h, w), 'nearest'))
+        pgc_map = self.att_conv(torch.cat(tuple(gc_feats), dim=1))
+        return pgc_map
+
+class GAM_Block(nn.Module):
+    def __init__(self, in_feats, cam_act='sigmoid', pam_act='relu'):
+        super().__init__()
+        act1 = nn.ReLU(inplace=True) if cam_act == 'relu' else nn.Sigmoid()
+        act2 = nn.ReLU(inplace=True) if pam_act == 'relu' else nn.Sigmoid()   
+        self.lamb = nn.Parameter(torch.zeros(1))
+        self.cam = PDLW_Block(in_feats, act_layer=act1)
+        self.pam = nn.Sequential(
+            nn.Conv2d(in_feats, 1, kernel_size=1, bias=False),
+            act2
+        )
+    
+    def forward(self, x):
+        gam = self.cam(x) * self.pam(x)
+        return x + self.lamb * gam
+
+class AGAM_Block(nn.Module):
+    def __init__(self, in_feats, use_lamb=True, lamb=1):
+        super().__init__()
+        self.lamb = lamb
+        self.cam = PDLW_Block(in_feats)
+        self.pam = PSCW_Block(in_feats)
+        if lamb == 1:
+            self.lamb0 = nn.Parameter(torch.ones(1) / 2) if use_lamb else 0.5
+        else:
+            self.lamb1 = nn.Parameter(torch.ones(1)) if use_lamb else 1
+            self.lamb2 = nn.Parameter(torch.ones(1)) if use_lamb else 1
+    
+    def forward(self, x):
+        caw = self.cam(x)
+        paw = self.pam(x)
+        if self.lamb == 1:
+            gaw = self.lamb0 * caw + (1 - self.lamb0) * paw
+        else:
+            gaw = self.lamb1 * caw + self.lamb2 * paw
+        return gaw * x
+
+class BGAM_Block(nn.Module):
+    def __init__(self, in_feats, use_lamb=True, lamb=1):
+        super().__init__()
+        self.lamb = lamb
+        self.cam = PDLW_Block(in_feats, act_layer=nn.Identity())
+        self.pam = PSCW_Block(in_feats, act_layer=nn.Identity())
+        if lamb == 1:
+            self.lamb0 = nn.Parameter(torch.ones(1) / 2) if use_lamb else 0.5
+        else:
+            self.lamb1 = nn.Parameter(torch.ones(1)) if use_lamb else 1
+            self.lamb2 = nn.Parameter(torch.ones(1)) if use_lamb else 1
+        self.sigmoid = nn.Sigmoid()
+    
+    def forward(self, x):
+        caw = self.cam(x)
+        paw = self.pam(x)
+        if self.lamb == 1:
+            gaw = self.lamb0 * caw + (1 - self.lamb0) * paw
+        else:
+            gaw = self.lamb1 * caw + self.lamb2 * paw
+        return self.sigmoid(gaw) * x
+
+class CGAM_Block(nn.Module):
+    def __init__(self, in_feats, use_lamb=True, lamb=1):
+        super().__init__()
+        self.lamb = lamb
+        self.cam = PDLW_Block(in_feats)
+        self.pam = PGCW_Block(in_feats)
+        if lamb == 1:
+            self.lamb0 = nn.Parameter(torch.ones(1) / 2) if use_lamb else 0.5
+        else:
+            self.lamb1 = nn.Parameter(torch.ones(1)) if use_lamb else 1
+            self.lamb2 = nn.Parameter(torch.ones(1)) if use_lamb else 1
+    
+    def forward(self, x):
+        caw = self.cam(x)
+        paw = self.pam(x)
+        if self.lamb == 1:
+            gaw = self.lamb0 * caw + (1 - self.lamb0) * paw
+        else:
+            gaw = self.lamb1 * caw + self.lamb2 * paw
+        return gaw * x
+
+class DGAM_Block(nn.Module):
+    def __init__(self, in_feats, use_lamb=True, lamb=1):
+        super().__init__()
+        self.lamb = lamb
+        self.cam = PDLW_Block(in_feats, act_layer=nn.Identity())
+        self.pam = PGCW_Block(in_feats, act_layer=nn.Identity())
+        if lamb == 1:
+            self.lamb0 = nn.Parameter(torch.ones(1) / 2) if use_lamb else 0.5
+        else:
+            self.lamb1 = nn.Parameter(torch.ones(1)) if use_lamb else 1
+            self.lamb2 = nn.Parameter(torch.ones(1)) if use_lamb else 1
+        self.sigmoid = nn.Sigmoid()
+    
+    def forward(self, x):
+        caw = self.cam(x)
+        paw = self.pam(x)
+        if self.lamb == 1:
+            gaw = self.lamb0 * caw + (1 - self.lamb0) * paw
+        else:
+            gaw = self.lamb1 * caw + self.lamb2 * paw
+        return self.sigmoid(gaw) * x
 
 class SE_Block(nn.Module):
     def __init__(self, in_feats, mid_factor=16):

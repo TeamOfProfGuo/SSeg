@@ -168,11 +168,46 @@ class Max_Level_Fuse(nn.Module):
     def forward(self, x, y):
         return torch.max(x, y)
 
+class CC1_Level_Fuse(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        self.cc_block = nn.Sequential(
+            nn.BatchNorm2d(2 * in_feats), nn.ReLU(inplace=True),
+            nn.Conv2d(2 * in_feats, in_feats, kernel_size=1, stride=1, padding=0, bias=False)
+        )
+        
+    def forward(self, x, y):
+        return self.cc_block(torch.cat((x, y), dim=1))
+
+class CC2_Level_Fuse(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        self.cc_block = nn.Sequential(
+            nn.Conv2d(2 * in_feats, in_feats, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(in_feats),
+            nn.ReLU(inplace=True)
+        )
+        
+    def forward(self, x, y):
+        return self.cc_block(torch.cat((x, y), dim=1))
+
+class CC3_Level_Fuse(nn.Module):
+    def __init__(self, in_feats):
+        super().__init__()
+        self.cc_block = nn.Sequential(
+            nn.Conv2d(2 * in_feats, in_feats, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.ReLU(inplace=True)
+        )
+        
+    def forward(self, x, y):
+        return self.cc_block(torch.cat((x, y), dim=1))
+
 class Base_Level_Fuse(nn.Module):
-    def __init__(self, in_feats, fuse_mode='max', conv_flag=(True, False)):
+    def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False)):
         super().__init__()
         self.conv_flag = conv_flag
-        fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse}
+        fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse,
+                     'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse}
         self.fuse = fuse_dict[fuse_mode](in_feats)
         self.rbb0 = ResidualBasicBlock(in_feats) if conv_flag[0] else nn.Identity()
         self.rbb1 = ResidualBasicBlock(in_feats) if conv_flag[1] else nn.Identity()

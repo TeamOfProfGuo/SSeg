@@ -208,7 +208,7 @@ class Trainer():
         print(final_result)
         
         # Export weights if needed
-        if self.args.export or self.best_pred[0] > 0.447:
+        if self.args.export or self.best_pred[0] > 0.455:
             export_info = '/%s_%s_%s' % (self.args.model, self.args.dataset, int(time.time()))
             torch.save(best_state_dict, SMY_PATH + export_info + '.pth')
             with open(SMY_PATH + export_info + '.txt', 'w') as f:
@@ -259,6 +259,7 @@ class Trainer():
 
 
 if __name__ == "__main__":
+    start_time = time.time()
     print('[Exp Name]:', sys.argv[1])
     print("-------mark program start----------")
     # configuration
@@ -272,5 +273,8 @@ if __name__ == "__main__":
     print('Starting Epoch:', trainer.args.start_epoch)
     print('Total Epoches:', trainer.args.epochs)
     trainer.train_n_evaluate()
+
+    exp_time_mins = int(time.time() - start_time) // 60
+    print('[Time]: %.2fh' % (exp_time_mins / 60))
 
 

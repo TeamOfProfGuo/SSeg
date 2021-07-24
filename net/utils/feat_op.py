@@ -186,13 +186,37 @@ def up_block(feats, module='cbr'):
         # # Ver 1
         # return nn.Sequential(
         #     ResidualBasicBlock(2*feats),
-        #     ResidualDecBlock(2*feats, feats, upsample=True)
+        #     ResidualDecBlock(2*feats, feats, upsample=True, lu='lurp')
         # )
         # Ver 2
         return nn.Sequential(
             ResidualBasicBlock(2*feats),
             ResidualBasicBlock(2*feats),
+            ResidualDecBlock(2*feats, feats, upsample=True, lu='lurp')
+        )
+    elif module == 'rbb7o':
+        return nn.Sequential(
+            ResidualBasicBlock(2*feats),
+            ResidualBasicBlock(2*feats),
             ResidualDecBlock(2*feats, feats, upsample=True)
+        )
+    elif module == 'rb7o':
+        return nn.Sequential(
+            ResidualBasicBlock(2*feats),
+            ResidualDecBlock(2*feats, feats, upsample=True)
+        )
+    elif module == 'rb7':
+        return nn.Sequential(
+            ResidualBasicBlock(2*feats),
+            ResidualDecBlock(2*feats, feats, upsample=True, lu='lurp')
+        )
+    elif module == 'r7o':
+        return nn.Sequential(
+            ResidualDecBlock(2*feats, feats, upsample=True)
+        )
+    elif module == 'r7':
+        return nn.Sequential(
+            ResidualDecBlock(2*feats, feats, upsample=True, lu='lurp')
         )
     elif module == 'nbc':
         return NBC_Up(2*feats)
@@ -215,24 +239,22 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
     elif module == 'rbb6':
         # Ver 1
         return nn.Sequential(
-            ResidualDecBlock(in_feats, mid_feats, upsample=True),
+            ResidualDecBlock(in_feats, mid_feats, upsample=True, lu='lurp'),
             ResidualBasicBlock(mid_feats),
             nn.Conv2d(mid_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True)
         )
-    elif module in ('rbb', 'rbb7'):
+    elif module in ('rbb', 'rbb7', 'rb7', 'r7'):
         # # Ver 1
         # return nn.Sequential(
-        #     ResidualDecBlock(in_feats, mid_feats, upsample=True),
+        #     ResidualDecBlock(in_feats, mid_feats, upsample=True, lu='lurp'),
         #     ResidualBasicBlock(mid_feats),
         #     nn.Conv2d(mid_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True)
         # )
         # Ver 2
         return nn.Sequential(
             nn.Conv2d(in_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True),
-            LearnedUpUnit(n_classes),
-            LearnedUpUnit(n_classes)
-            # LU_Unit('lurp', n_classes),
-            # LU_Unit('lurp', n_classes)
+            LU_Unit('lurp', n_classes),
+            LU_Unit('lurp', n_classes)
         )
         # # Ver 3
         # return nn.Sequential(
@@ -241,6 +263,12 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
         #     LU_Unit('lurp', n_classes),
         #     LU_Unit('lurp', n_classes)
         # )
+    elif module in ('rbb7o', 'rb7o', 'r7o'):
+        return nn.Sequential(
+            nn.Conv2d(in_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True),
+            LearnedUpUnit(n_classes),
+            LearnedUpUnit(n_classes)
+        )
     elif module == 'nbc':
         return nn.Sequential(
             nn.Conv2d(in_feats, n_classes, kernel_size=3, padding=1),

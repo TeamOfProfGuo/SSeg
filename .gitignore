@@ -1,0 +1,10 @@
+*.DS_Store
+*.swp
+*.pyc
+*.pth.tar
+*.pth
+*.nyu.cluster
+*.log
+*.out
+*.txt
+*.yaml
