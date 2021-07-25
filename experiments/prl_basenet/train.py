@@ -111,8 +111,8 @@ class Trainer():
         if not os.path.isdir(SMY_PATH):
             utils.mkdir(SMY_PATH)
         self.writer = SummaryWriter(SMY_PATH)
-        image_sample = next(iter(self.trainloader))
-        self.writer.add_graph(model, (image_sample[0].to(self.device), image_sample[1].to(self.device)))
+        # image_sample = next(iter(self.trainloader))
+        # self.writer.add_graph(model, (image_sample[0].to(self.device), image_sample[1].to(self.device)))
 
         # resuming checkpoint
         if args.resume is not None and args.resume != 'None':

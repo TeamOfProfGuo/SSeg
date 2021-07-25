@@ -15,7 +15,8 @@ class Fuse_Block(nn.Module):
     def __init__(self, in_feats, fb='simple', fuse_args={}):
         super().__init__()
         fuse_dict = {'simple': Simple_RGBD_Fuse, 'fuse': RGBD_Fuse_Block, 'gau': GAU_Fuse, 
-                     'gf': GF_Module, 'pdlc': PDLC_Fuse, 'lgc': LGC_Fuse, 'cc': CC_Fuse}
+                     'gf': GF_Module, 'pdlc': PDLC_Fuse, 'lgc': LGC_Fuse, 'cc': CC_Fuse,
+                     'rcc': RCC_Fuse}
         self.fb = fuse_dict[fb](in_feats, **fuse_args)
         
     def forward(self, rgb, dep):
@@ -36,15 +37,25 @@ class CC3_Block(nn.Sequential):
             nn.ReLU(inplace=True)
         ))
 
+class RCC_Block(nn.Module):
+    def __init__(self, in_feats, kernel=1, act='idt'):
+        super().__init__()
+        act_dict = {'idt': nn.Identity(), 'relu': nn.ReLU(inplace=True)}
+        self.rcc = nn.Sequential(
+            nn.Conv2d(2*in_feats, in_feats, kernel_size=kernel, padding=kernel//2, groups=in_feats, bias=True),
+            act_dict[act]
+        )
+        
+    def forward(self, x, d):
+        b, c, h, w = x.size()
+        y = torch.cat((x, d), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
+        return self.rcc(y)
+
 class RGBD_Fuse_Block(nn.Module):
     def __init__(self, in_feats, out_method='add', pre_module='pca', mode='late', pre_setting={},
                     use_lamb=True, refine_dep=False):
         super().__init__()
-        module_dict = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 
-                       'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
-                       'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM,
-                       'lgc': LGC_Block, 'pgc': PGC_Block, 'gam': GAM_Block, 'agam': AGAM_Block,
-                       'bgam': BGAM_Block, 'cgam': CGAM_Block, 'dgam': DGAM_Block}
+        module_dict = ATT_MODULE_DICT
         self.mode = mode
         self.module = module_dict[pre_module]
         self.out_method = out_method
@@ -95,11 +106,7 @@ class RGBD_Fuse_Block(nn.Module):
 class CC_Fuse(nn.Module):
     def __init__(self, in_feats, mode='rsp', att_module='pdl', att_setting={}, refine_dep=False):
         super().__init__()
-        module_dict = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 
-                       'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
-                       'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM,
-                       'lgc': LGC_Block, 'pgc': PGC_Block, 'gam': GAM_Block, 'agam': AGAM_Block,
-                       'bgam': BGAM_Block, 'cgam': CGAM_Block, 'dgam': DGAM_Block}
+        module_dict = ATT_MODULE_DICT
         self.mode = mode
         self.refine_dep = refine_dep
         self.cc1 = CC3_Block(in_feats)
@@ -120,6 +127,24 @@ class CC_Fuse(nn.Module):
             feats = torch.cat((rgb, dep), dim=1)
             feats = self.pre(feats)
         return self.cc1(feats), (self.cc2(feats) if self.refine_dep else d)
+
+class RCC_Fuse(nn.Module):
+    def __init__(self, in_feats, fuse_setting={}, att_module='pdl', att_setting={}, refine_dep=False):
+        super().__init__()
+        module_dict = ATT_MODULE_DICT
+        self.refine_dep = refine_dep
+        self.rcc1 = RCC_Block(in_feats, **fuse_setting)
+        self.rcc2 = RCC_Block(in_feats, **fuse_setting) if refine_dep else None
+        self.rgb_pre = module_dict[att_module](in_feats, **att_setting)
+        self.dep_pre = module_dict[att_module](in_feats, **att_setting)
+    
+    def forward(self, rgb, dep):
+        d = dep.clone()
+        rgb = self.rgb_pre(rgb)
+        dep = self.dep_pre(dep)
+        rgb_out = self.rcc1(rgb, dep)
+        dep_out = self.rcc2(rgb, dep) if self.refine_dep else d
+        return rgb_out, dep_out
 
 class PDLC_Fuse(nn.Module):
     def __init__(self, in_feats):
@@ -769,6 +794,19 @@ class DGAM_Block(nn.Module):
             gaw = self.lamb1 * caw + self.lamb2 * paw
         return self.sigmoid(gaw) * x
 
+class SAM_Block(torch.nn.Module):
+    def __init__(self, in_feats, lamb=1e-4):
+        super().__init__()
+        self.act = nn.Sigmoid()
+        self.lamb = lamb
+
+    def forward(self, x):
+        _, _, h, w = x.size()
+        n = w * h - 1
+        x_minus_mu_square = (x - x.mean(dim=[2,3], keepdim=True)).pow(2)
+        y = x_minus_mu_square / (4 * (x_minus_mu_square.sum(dim=[2,3], keepdim=True) / n + self.lamb)) + 0.5
+        return x * self.act(y)
+
 class SE_Block(nn.Module):
     def __init__(self, in_feats, mid_factor=16):
         super().__init__()
@@ -996,3 +1034,9 @@ class BaseRefineNetBlock(nn.Module):
             out = rcu_xs[0]
 
         return self.output_conv(out)
+
+ATT_MODULE_DICT = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Block, 
+                   'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
+                   'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM,
+                   'lgc': LGC_Block, 'pgc': PGC_Block, 'gam': GAM_Block, 'agam': AGAM_Block,
+                   'bgam': BGAM_Block, 'cgam': CGAM_Block, 'dgam': DGAM_Block, 'sam': SAM_Block}
