@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from .gf import GF_Module
-from net.utils.feat_op import interpolate
+from net.utils.feat_op import interpolate, init_conv
 
 __all__ = ['Fuse_Block', 'Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse', 
            'PPE_Block', 'PPCE_Block', 'PDLC_Fuse']
@@ -16,7 +16,7 @@ class Fuse_Block(nn.Module):
         super().__init__()
         fuse_dict = {'simple': Simple_RGBD_Fuse, 'fuse': RGBD_Fuse_Block, 'gau': GAU_Fuse, 
                      'gf': GF_Module, 'pdlc': PDLC_Fuse, 'lgc': LGC_Fuse, 'cc': CC_Fuse,
-                     'rcc': RCC_Fuse}
+                     'rcc': RCC_Fuse, 'rcci': RCCI_Fuse}
         self.fb = fuse_dict[fb](in_feats, **fuse_args)
         
     def forward(self, rgb, dep):
@@ -50,6 +50,24 @@ class RCC_Block(nn.Module):
         b, c, h, w = x.size()
         y = torch.cat((x, d), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
         return self.rcc(y)
+
+class RCCI_Block(nn.Module):
+    def __init__(self, in_feats, pad_mode='zero', kernel=1, act='relu', init_args={}):
+        super().__init__()
+        pad_size = tuple([kernel // 2] * 4)
+        act_dict = {'idt': nn.Identity(), 'relu': nn.ReLU(inplace=True)}
+
+        pad_layer = nn.ZeroPad2d(pad_size) if pad_mode == 'zero' else nn.ReplicationPad2d(pad_size)
+        conv_layer = nn.Conv2d(2*in_feats, in_feats, kernel_size=kernel, padding=0, groups=in_feats, bias=True)
+        conv_layer.weight.data = init_conv(in_feats, 2, kernel, **init_args)
+        act_layer = act_dict[act]
+
+        self.rcci = nn.Sequential(pad_layer, conv_layer, act_layer)
+        
+    def forward(self, x, y):
+        b, c, h, w = x.size()
+        feats = torch.cat((x, y), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
+        return self.rcci(feats)
 
 class RGBD_Fuse_Block(nn.Module):
     def __init__(self, in_feats, out_method='add', pre_module='pca', mode='late', pre_setting={},
@@ -145,6 +163,22 @@ class RCC_Fuse(nn.Module):
         rgb_out = self.rcc1(rgb, dep)
         dep_out = self.rcc2(rgb, dep) if self.refine_dep else d
         return rgb_out, dep_out
+
+class RCCI_Fuse(nn.Module):
+    def __init__(self, in_feats, fuse_setting={}, att_module='pdl', att_setting={}, refine_dep=False):
+        super().__init__()
+        module_dict = ATT_MODULE_DICT
+        self.refine_dep = refine_dep
+        self.rgb_pre = module_dict[att_module](in_feats, **att_setting)
+        self.dep_pre = module_dict[att_module](in_feats, **att_setting)
+        self.rgb_out = RCCI_Block(in_feats, **fuse_setting)
+        self.dep_out = RCCI_Block(in_feats, **fuse_setting) if refine_dep else None
+    
+    def forward(self, rgb, dep):
+        d = dep.clone()
+        rgb = self.rgb_pre(rgb)
+        dep = self.dep_pre(dep)
+        return self.rgb_out(rgb, dep), (self.dep_out(rgb, dep) if self.refine_dep else d)
 
 class PDLC_Fuse(nn.Module):
     def __init__(self, in_feats):

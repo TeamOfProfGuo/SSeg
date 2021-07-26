@@ -18,7 +18,7 @@ class Decoder(nn.Module):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, decoder_feat, n_classes, conv_module='cbr', level_fuse='add', feats='f', rf_conv=(True, False)):
+    def __init__(self, decoder_feat, n_classes, conv_module='cbr', level_fuse='add', feats='f', rf_conv=(True, False), lf_args={}):
         super().__init__()
 
         self.feats = feats
@@ -26,7 +26,7 @@ class Base_Decoder(nn.Module):
 
         # Refine Blocks
         for i in range(len(decoder_feat['level'])):
-            self.add_module('refine%d' % i, Base_Level_Fuse(decoder_feat['level'][i], level_fuse, rf_conv))
+            self.add_module('refine%d' % i, Base_Level_Fuse(decoder_feat['level'][i], level_fuse, rf_conv, lf_args))
 
         # Upsample Blocks
         for i in range(len(decoder_feat['level'])):
@@ -146,14 +146,14 @@ class LearnedUpUnit(nn.Module):
         return x
 
 class Simple_Level_Fuse(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, **kwargs):
         super().__init__()
         
     def forward(self, x, y):
         return x+y
 
 class Norm_Add(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, **kwargs):
         super().__init__()
         self.norm1 = nn.BatchNorm2d(in_feats)
         self.norm2 = nn.BatchNorm2d(in_feats)
@@ -162,14 +162,14 @@ class Norm_Add(nn.Module):
         return self.norm1(x) + self.norm2(y)
 
 class Max_Level_Fuse(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, **kwargs):
         super().__init__()
         
     def forward(self, x, y):
         return torch.max(x, y)
 
 class CC1_Level_Fuse(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, **kwargs):
         super().__init__()
         self.cc_block = nn.Sequential(
             nn.BatchNorm2d(2 * in_feats), nn.ReLU(inplace=True),
@@ -180,7 +180,7 @@ class CC1_Level_Fuse(nn.Module):
         return self.cc_block(torch.cat((x, y), dim=1))
 
 class CC2_Level_Fuse(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, **kwargs):
         super().__init__()
         self.cc_block = nn.Sequential(
             nn.Conv2d(2 * in_feats, in_feats, kernel_size=1, stride=1, padding=0, bias=False),
@@ -192,7 +192,7 @@ class CC2_Level_Fuse(nn.Module):
         return self.cc_block(torch.cat((x, y), dim=1))
 
 class CC3_Level_Fuse(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, **kwargs):
         super().__init__()
         self.cc_block = nn.Sequential(
             nn.Conv2d(2 * in_feats, in_feats, kernel_size=1, stride=1, padding=0, bias=True),
@@ -202,13 +202,32 @@ class CC3_Level_Fuse(nn.Module):
     def forward(self, x, y):
         return self.cc_block(torch.cat((x, y), dim=1))
 
+class CC3I_Level_Fuse(nn.Module):
+    def __init__(self, in_feats, pad_mode='zero', kernel=1, act='relu', init_args={}):
+        super().__init__()
+        pad_size = tuple([kernel // 2] * 4)
+        act_dict = {'idt': nn.Identity(), 'relu': nn.ReLU(inplace=True)}
+
+        pad_layer = nn.ZeroPad2d(pad_size) if pad_mode == 'zero' else nn.ReplicationPad2d(pad_size)
+        conv_layer = nn.Conv2d(2*in_feats, in_feats, kernel_size=kernel, padding=0, groups=in_feats, bias=True)
+        conv_layer.weight.data = init_conv(in_feats, 2, kernel, **init_args)
+        act_layer = act_dict[act]
+
+        self.rcci = nn.Sequential(pad_layer, conv_layer, act_layer)
+        
+    def forward(self, x, y):
+        b, c, h, w = x.size()
+        feats = torch.cat((x, y), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
+        return self.rcci(feats)
+
 class Base_Level_Fuse(nn.Module):
-    def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False)):
+    def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False), lf_args={}):
         super().__init__()
         self.conv_flag = conv_flag
         fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse,
-                     'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse}
-        self.fuse = fuse_dict[fuse_mode](in_feats)
+                     'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse,
+                     'cc3i': CC3I_Level_Fuse}
+        self.fuse = fuse_dict[fuse_mode](in_feats, **lf_args)
         self.rbb0 = ResidualBasicBlock(in_feats) if conv_flag[0] else nn.Identity()
         self.rbb1 = ResidualBasicBlock(in_feats) if conv_flag[1] else nn.Identity()
     

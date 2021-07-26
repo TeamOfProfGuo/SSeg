@@ -3,7 +3,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-__all__ = ['ConvBnAct', 'ResidualBasicBlock', 'ResidualDecBlock', 'NBC_Block', 'LU_Unit', 'interpolate', 'up_block', 'out_block']
+__all__ = ['ConvBnAct', 'ResidualBasicBlock', 'ResidualDecBlock', 'NBC_Block', 'LU_Unit', 
+           'interpolate', 'up_block', 'out_block', 'init_conv']
 
 class ConvBnAct(nn.Sequential):
     def __init__(self, in_feats, out_feats, kernel=3, stride=1, pad=1, bias=False, conv_args = {},
@@ -194,7 +195,7 @@ def up_block(feats, module='cbr'):
             ResidualBasicBlock(2*feats),
             ResidualDecBlock(2*feats, feats, upsample=True, lu='lurp')
         )
-    elif module == 'rbb7o':
+    elif module in ('rbb7o', 'rbb7o-sam'):
         return nn.Sequential(
             ResidualBasicBlock(2*feats),
             ResidualBasicBlock(2*feats),
@@ -269,6 +270,13 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
             LearnedUpUnit(n_classes),
             LearnedUpUnit(n_classes)
         )
+    elif module == 'rbb7o-sam':
+        return nn.Sequential(
+            SAM_Block(in_feats),
+            nn.Conv2d(in_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True),
+            LearnedUpUnit(n_classes),
+            LearnedUpUnit(n_classes)
+        )
     elif module == 'nbc':
         return nn.Sequential(
             nn.Conv2d(in_feats, n_classes, kernel_size=3, padding=1),
@@ -277,6 +285,43 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
         )
     else:
         raise NotImplementedError('Invalid decoder module: %s.' % module)
+
+def init_conv(r, c=2, k=1, mode='a', decay1=-1, decay2=1e-2):
+    # kernel that mimics bilinear interpolation
+    w0 = torch.tensor([[[
+                [0.0625, 0.1250, 0.0625],
+                [0.1250, 0.2500, 0.1250],
+                [0.0625, 0.1250, 0.0625]
+        ]]])
+    if mode == 'a':
+        w = torch.ones(1, 1, k, k) / (k * k)
+        return (w * (c ** decay1)).repeat(r, c, 1, 1)
+    elif mode == 'b':
+        w1 = torch.ones(1, k, k) / (k * k)
+        w2 = w1.repeat(c-1, 1, 1) * decay2
+        w = torch.cat((w1, w2), dim=0)
+        return w.view(1, c, k, k).repeat(r, 1, 1, 1)
+    elif mode == 'a3':
+        return (w0 * (c ** decay1)).repeat(r, c, 1, 1)
+    elif mode == 'b3':
+        w1 = w0.clone().repeat(r, 1, 1, 1)
+        w2 = (w0 * decay2).repeat(r, c-1, 1, 1)
+        return torch.cat((w1, w2), dim=1)
+    else:
+        raise NotImplementedError('Invalid init mode: .%s' % mode)
+
+class SAM_Block(torch.nn.Module):
+    def __init__(self, in_feats, lamb=1e-4):
+        super().__init__()
+        self.act = nn.Sigmoid()
+        self.lamb = lamb
+
+    def forward(self, x):
+        _, _, h, w = x.size()
+        n = w * h - 1
+        x_minus_mu_square = (x - x.mean(dim=[2,3], keepdim=True)).pow(2)
+        y = x_minus_mu_square / (4 * (x_minus_mu_square.sum(dim=[2,3], keepdim=True) / n + self.lamb)) + 0.5
+        return x * self.act(y)
 
 class LearnedUpUnit(nn.Module):
     def __init__(self, in_feats):
