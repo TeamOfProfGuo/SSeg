@@ -12,7 +12,7 @@ class Centerpiece(nn.Module):
         super().__init__()
         self.feats = feats
         self.feats_list = [64, 128, 256, 512]
-        cp_dict = {'none': Identity_Module, 'psp': PSP_Module}
+        cp_dict = {'none': Identity_Module, 'psp': PSP_Module, 'sam': SAM_Module}
         for i in range(len(self.feats_list)):
             self.add_module('cp%d' % (i+1), cp_dict[cp](self.feats_list[i], **cp_args))
     
@@ -61,3 +61,16 @@ class PSP_Module(nn.Module):
             feats = self.__getattr__('pool%d' % s)(x)
             out.append(interpolate(feats, (h, w), self.up_mode))
         return torch.cat(tuple(out), dim=1)
+
+class SAM_Module(torch.nn.Module):
+    def __init__(self, in_feats, lamb=1e-4):
+        super().__init__()
+        self.act = nn.Sigmoid()
+        self.lamb = lamb
+
+    def forward(self, x):
+        _, _, h, w = x.size()
+        n = w * h - 1
+        x_minus_mu_square = (x - x.mean(dim=[2,3], keepdim=True)).pow(2)
+        y = x_minus_mu_square / (4 * (x_minus_mu_square.sum(dim=[2,3], keepdim=True) / n + self.lamb)) + 0.5
+        return x * self.act(y)

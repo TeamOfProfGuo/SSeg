@@ -195,7 +195,7 @@ def up_block(feats, module='cbr'):
             ResidualBasicBlock(2*feats),
             ResidualDecBlock(2*feats, feats, upsample=True, lu='lurp')
         )
-    elif module in ('rbb7o', 'rbb7o-sam'):
+    elif module in ('rbb7o', 'rbb7o-sam', 'rbb7o-usam'):
         return nn.Sequential(
             ResidualBasicBlock(2*feats),
             ResidualBasicBlock(2*feats),
@@ -274,6 +274,13 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
         return nn.Sequential(
             SAM_Block(in_feats),
             nn.Conv2d(in_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True),
+            LearnedUpUnit(n_classes),
+            LearnedUpUnit(n_classes)
+        )
+    elif module == 'rbb7o-usam':
+        return nn.Sequential(
+            nn.Conv2d(in_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True),
+            SAM_Block(n_classes),
             LearnedUpUnit(n_classes),
             LearnedUpUnit(n_classes)
         )

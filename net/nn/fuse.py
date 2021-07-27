@@ -59,7 +59,9 @@ class RCCI_Block(nn.Module):
 
         pad_layer = nn.ZeroPad2d(pad_size) if pad_mode == 'zero' else nn.ReplicationPad2d(pad_size)
         conv_layer = nn.Conv2d(2*in_feats, in_feats, kernel_size=kernel, padding=0, groups=in_feats, bias=True)
-        conv_layer.weight.data = init_conv(in_feats, 2, kernel, **init_args)
+        if init_args['mode'] != 'rand':
+            print('[RCCI]: Using customized conv init.')
+            conv_layer.weight.data = init_conv(in_feats, 2, kernel, **init_args)
         act_layer = act_dict[act]
 
         self.rcci = nn.Sequential(pad_layer, conv_layer, act_layer)
