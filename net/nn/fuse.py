@@ -450,6 +450,34 @@ class PDL_Block(nn.Module):
         w = self.mlp(y).view(b, c, 1, 1)                # [b,  c, 1, 1] => [b, c, 1, 1]
         return w * x
 
+class PDLE_Block(nn.Module):
+    def __init__(self, in_feats, pp_size=(1, 3, 5, 7), descriptor=8, mid_feats=16):
+        super().__init__()
+        self.pp_size = pp_size                              # pp_size: pyramid layer num
+        self.feats_size = sum([(s ** 2) for s in pp_size])  # f: total feats for descritor
+        self.descriptor = descriptor                        # d: descriptor dim (for one channel)
+        print('[PDLE]: s = %s, d = %d, m = %d.' % (pp_size, descriptor, mid_feats))
+
+        self.des = nn.Conv2d(self.feats_size, descriptor, kernel_size=1)
+        self.mlp = nn.Sequential(
+            nn.Linear(descriptor * in_feats, mid_feats, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_feats, in_feats),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        pp_size, f, d = self.pp_size, self.feats_size, self.descriptor
+        pooling_pyramid = []
+        for s in pp_size:
+            pooling_pyramid.append(F.adaptive_avg_pool2d(x, s).view(b, c, 1, -1))
+        y = torch.cat(tuple(pooling_pyramid), dim=-1)   # [b,  c, 1, f]
+        y = y.reshape(b*c, f, 1, 1)                     # [bc, f, 1, 1]
+        y = self.des(y).view(b, c*d)                    # [bc, d, 1, 1] => [b, cd, 1, 1]
+        w = self.mlp(y).view(b, c, 1, 1)                # [b,  c, 1, 1] => [b, c, 1, 1]
+        return w * x
+
 class PPE_Block(nn.Module):
     def __init__(self, in_feats, pp_layer=3, mid_feats=16):
         super().__init__()
@@ -1075,4 +1103,5 @@ ATT_MODULE_DICT = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Bl
                    'eca': ECA_Block, 'scse': SCSE_Block, 'ppc': PPC_Block, 'pdl': PDL_Block,
                    'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM,
                    'lgc': LGC_Block, 'pgc': PGC_Block, 'gam': GAM_Block, 'agam': AGAM_Block,
-                   'bgam': BGAM_Block, 'cgam': CGAM_Block, 'dgam': DGAM_Block, 'sam': SAM_Block}
+                   'bgam': BGAM_Block, 'cgam': CGAM_Block, 'dgam': DGAM_Block, 'sam': SAM_Block,
+                   'pdle': PDLE_Block}

@@ -18,7 +18,7 @@ class Decoder(nn.Module):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, decoder_feat, n_classes, conv_module='cbr', level_fuse='add', feats='f', rf_conv=(True, False), lf_args={}):
+    def __init__(self, decoder_feat, n_classes, conv_module='cbr', level_fuse='add', feats='f', rf_conv=(True, False), lf_bb='rbb', lf_args={}):
         super().__init__()
 
         self.feats = feats
@@ -26,7 +26,7 @@ class Base_Decoder(nn.Module):
 
         # Refine Blocks
         for i in range(len(decoder_feat['level'])):
-            self.add_module('refine%d' % i, Base_Level_Fuse(decoder_feat['level'][i], level_fuse, rf_conv, lf_args))
+            self.add_module('refine%d' % i, Base_Level_Fuse(decoder_feat['level'][i], level_fuse, rf_conv, lf_bb, lf_args))
 
         # Upsample Blocks
         for i in range(len(decoder_feat['level'])):
@@ -221,15 +221,16 @@ class CC3I_Level_Fuse(nn.Module):
         return self.rcci(feats)
 
 class Base_Level_Fuse(nn.Module):
-    def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False), lf_args={}):
+    def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False), lf_bb='rbb', lf_args={}):
         super().__init__()
         self.conv_flag = conv_flag
+        bb_dict = {'rbb': ResidualBasicBlock, 'drb': DepResidualBasicBlock}
         fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse,
                      'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse,
                      'cc3i': CC3I_Level_Fuse}
         self.fuse = fuse_dict[fuse_mode](in_feats, **lf_args)
-        self.rbb0 = ResidualBasicBlock(in_feats) if conv_flag[0] else nn.Identity()
-        self.rbb1 = ResidualBasicBlock(in_feats) if conv_flag[1] else nn.Identity()
+        self.rbb0 = bb_dict[lf_bb](in_feats) if conv_flag[0] else nn.Identity()
+        self.rbb1 = bb_dict[lf_bb](in_feats) if conv_flag[1] else nn.Identity()
     
     def forward(self, x, y):
         y = self.rbb0(y)    # Refine feats from backbone
