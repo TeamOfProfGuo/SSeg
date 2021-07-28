@@ -161,6 +161,19 @@ class Norm_Add(nn.Module):
     def forward(self, x, y):
         return self.norm1(x) + self.norm2(y)
 
+class INA_Level_Fuse(nn.Module):
+    def __init__(self, in_feats, *args, **kwargs):
+        super().__init__()
+        self.norm1 = nn.BatchNorm2d(in_feats)
+        self.norm2 = nn.BatchNorm2d(in_feats)
+        self.norm1.weight.data.fill_(1)
+        self.norm2.weight.data.fill_(1)
+        self.norm1.bias.data.zero_()
+        self.norm2.bias.data.zero_()
+        
+    def forward(self, x, y):
+        return self.norm1(x) + self.norm2(y)
+
 class Max_Level_Fuse(nn.Module):
     def __init__(self, in_feats, **kwargs):
         super().__init__()
@@ -221,20 +234,19 @@ class CC3I_Level_Fuse(nn.Module):
         return self.rcci(feats)
 
 class Base_Level_Fuse(nn.Module):
-    def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False), lf_bb='rbb', lf_args={}):
+    def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False), lf_bb='rbb[2->2]', lf_args={}):
         super().__init__()
         self.conv_flag = conv_flag
-        bb_dict = {'rbb': ResidualBasicBlock, 'drb': DepResidualBasicBlock}
         fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse,
                      'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse,
-                     'cc3i': CC3I_Level_Fuse}
+                     'cc3i': CC3I_Level_Fuse, 'ina': INA_Level_Fuse}
         self.fuse = fuse_dict[fuse_mode](in_feats, **lf_args)
-        self.rbb0 = bb_dict[lf_bb](in_feats) if conv_flag[0] else nn.Identity()
-        self.rbb1 = bb_dict[lf_bb](in_feats) if conv_flag[1] else nn.Identity()
+        self.rfb0 = customized_module(lf_bb, in_feats) if conv_flag[0] else nn.Identity()
+        self.rfb1 = customized_module(lf_bb, in_feats) if conv_flag[1] else nn.Identity()
     
     def forward(self, x, y):
-        y = self.rbb0(y)    # Refine feats from backbone
-        return self.rbb1(self.fuse(x, y))
+        y = self.rfb0(y)    # Refine feats from backbone
+        return self.rfb1(self.fuse(x, y))
 
 class GAU_Block(nn.Module):
     def __init__(self, in_feats, r=16):

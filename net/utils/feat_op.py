@@ -5,7 +5,7 @@ from torch.nn import functional as F
 
 __all__ = ['ConvBnAct', 'ResidualBasicBlock', 'ResidualDecBlock', 'NBC_Block', 'LU_Unit',
            'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock',
-           'interpolate', 'up_block', 'out_block', 'init_conv']
+           'interpolate', 'up_block', 'out_block', 'init_conv', 'customized_module']
 
 class ConvBnAct(nn.Sequential):
     def __init__(self, in_feats, out_feats, kernel=3, stride=1, pad=1, bias=False, conv_args = {},
@@ -26,7 +26,7 @@ class DepConvBnAct(nn.Sequential):
         self.add_module('act', act_layer if act else nn.Identity())
 
 class ResidualBasicBlock(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, out_feats=None):
         super().__init__()
         self.conv_unit = nn.Sequential(
             ConvBnAct(in_feats, in_feats),
@@ -37,6 +37,51 @@ class ResidualBasicBlock(nn.Module):
     def forward(self, x):
         out = self.conv_unit(x)
         return self.relu(x + out)
+
+class IRB_Block(nn.Module):
+    def __init__(self, in_feats, out_feats=None, act='idt', expand_ratio=6):
+        super().__init__()
+        mid_feats = round(in_feats * expand_ratio)
+        out_feats = in_feats if out_feats is None else out_feats
+        act_layer = nn.Identity() if act == 'idt' else nn.ReLU6(inplace=True)
+        self.idt = (in_feats == out_feats)
+        self.irb = nn.Sequential(
+                # point-wise conv
+                nn.Conv2d(in_feats, mid_feats, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(mid_feats),
+                nn.ReLU6(inplace=True),
+                # depth-wise conv
+                nn.Conv2d(mid_feats, mid_feats, kernel_size=3, stride=1, padding=1, groups=mid_feats, bias=False),
+                nn.BatchNorm2d(mid_feats),
+                nn.ReLU6(inplace=True),
+                # point-wise conv
+                nn.Conv2d(mid_feats, out_feats, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(out_feats),
+                act_layer
+            )
+        self._initialize_weights()
+
+    def forward(self, x):
+        return (x + self.irb(x)) if self.idt else self.irb(x)
+    
+    def _initialize_weights(self):
+        from math import sqrt
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, sqrt(2. / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+class IRR_Block(IRB_Block):
+    def __init__(self, in_feats, out_feats=None, act='relu6', expand_ratio=6):
+        super().__init__(in_feats, out_feats, act, expand_ratio)
+    
+    def forward(self, x):
+        return super().forward(x)
 
 class DepResidualBasicBlock(nn.Module):
     def __init__(self, in_feats):
@@ -263,33 +308,8 @@ def up_block(feats, module='cbr'):
         return nn.Sequential(
             ResidualDecBlock(2*feats, feats, upsample=True, lu='lurp')
         )
-    # Depth-wise RBB experiments
-    elif module == 'drb1':
-        return nn.Sequential(
-            DepResidualDecBlock(2*feats, feats, upsample=True)
-        )
-    elif module == 'drb2':
-        return nn.Sequential(
-            DepResidualBasicBlock(2*feats),
-            DepResidualDecBlock(2*feats, feats, upsample=True)
-        )
-    elif module == 'drb3':
-        return nn.Sequential(
-            DepResidualBasicBlock(2*feats),
-            DepResidualBasicBlock(2*feats),
-            DepResidualDecBlock(2*feats, feats, upsample=True)
-        )
-    elif module == 'drb4':
-        return nn.Sequential(
-            DepResidualBasicBlock(2*feats),
-            ResidualDecBlock(2*feats, feats, upsample=True)
-        )
-    elif module == 'drb5':
-        return nn.Sequential(
-            DepResidualBasicBlock(2*feats),
-            DepResidualBasicBlock(2*feats),
-            ResidualDecBlock(2*feats, feats, upsample=True)
-        )
+    elif module.find('ctmd') != -1:
+        return nn.Sequential(*[customized_module(info, feats) for info in module.split()[1:]])
     elif module == 'nbc':
         return NBC_Up(2*feats)
     else:
@@ -335,7 +355,7 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
         #     LU_Unit('lurp', n_classes),
         #     LU_Unit('lurp', n_classes)
         # )
-    elif module in ('rbb7o', 'rb7o', 'r7o', 'drb1', 'drb2', 'drb3', 'drb4', 'drb5'):
+    elif (module in ('rbb7o', 'rb7o', 'r7o')) or (module.find('ctmd') != -1):
         return nn.Sequential(
             nn.Conv2d(in_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True),
             LearnedUpUnit(n_classes),
@@ -387,6 +407,26 @@ def init_conv(r, c=2, k=1, mode='a', decay1=-1, decay2=1e-2):
         return torch.cat((w1, w2), dim=1)
     else:
         raise NotImplementedError('Invalid init mode: .%s' % mode)
+
+def customized_module(info, feats):
+    module_dict = {
+            'rbb': ResidualBasicBlock,
+            'rdb': ResidualDecBlock,
+            'luu': LearnedUpUnit,
+            'irb': IRB_Block,
+            'irr': IRR_Block
+        }
+    # Format1: 'xxx[a->b]', i.e. 'module[in_feats->out_feats]'
+    # Format2: 'xxx(a)', i.e. 'module(feats)'
+    module_name = info[:3]
+    assert module_name in module_dict
+    print(info)
+    if info.find('(') != -1:
+        return module_dict[module_name]((int(info[4]) * feats // 2))
+    elif info.find('[') != -1:
+        return module_dict[module_name]((int(info[4]) * feats // 2), (int(info[7]) * feats // 2))
+    else:
+        raise ValueError('Invalid customized module format: %s' % info)
 
 class SAM_Block(torch.nn.Module):
     def __init__(self, in_feats, lamb=1e-4):
