@@ -32,6 +32,21 @@ def archive_path():
             move(os.path.join(root, dir), os.path.join(root, key))
             print('[%s] moved to [%s].' % (dir, key))
 
+def yaml_to_path(dst_dir = './results/', yaml_dir = './config/'):
+    assert len(sys.argv) > 2
+    key = sys.argv[2]
+    file_list = os.listdir(yaml_dir)
+    # print(file_list)
+    for file in file_list:
+        if file.endswith('.yaml'):
+            exp = file.split('.')[0]
+            dst_path = os.path.join(dst_dir, key, exp)
+            yaml_path = os.path.join(yaml_dir, exp + '.yaml')
+            # print(dst_path)
+            # print(yaml_path)
+            if os.path.isfile(yaml_path) and os.path.isdir(dst_path):
+                move(yaml_path, dst_path)
+                print('Exp [%s] archived.' % exp)
 
 if __name__ == '__main__':
     # print(sys.argv)
@@ -39,6 +54,8 @@ if __name__ == '__main__':
         archive_log()
     elif sys.argv[1] == 'path':
         archive_path()
+    elif sys.argv[1] == 'yaml':
+        yaml_to_path()
         
 
         
