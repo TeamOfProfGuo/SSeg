@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 
 __all__ = ['ConvBnAct', 'ResidualBasicBlock', 'ResidualDecBlock', 'NBC_Block', 'LU_Unit',
-           'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock',
+           'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock', 'SE_Block',
            'interpolate', 'up_block', 'out_block', 'init_conv', 'customized_module']
 
 class ConvBnAct(nn.Sequential):
@@ -59,22 +59,22 @@ class IRB_Block(nn.Module):
                 nn.BatchNorm2d(out_feats),
                 act_layer
             )
-        self._initialize_weights()
+        # self._initialize_weights()
 
     def forward(self, x):
         return (x + self.irb(x)) if self.idt else self.irb(x)
     
-    def _initialize_weights(self):
-        from math import sqrt
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, sqrt(2. / n))
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
+    # def _initialize_weights(self):
+    #     from math import sqrt
+    #     for m in self.modules():
+    #         if isinstance(m, nn.Conv2d):
+    #             n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+    #             m.weight.data.normal_(0, sqrt(2. / n))
+    #             if m.bias is not None:
+    #                 m.bias.data.zero_()
+    #         elif isinstance(m, nn.BatchNorm2d):
+    #             m.weight.data.fill_(1)
+    #             m.bias.data.zero_()
 
 class IRR_Block(IRB_Block):
     def __init__(self, in_feats, out_feats=None, act='relu6', expand_ratio=6):
@@ -82,6 +82,32 @@ class IRR_Block(IRB_Block):
     
     def forward(self, x):
         return super().forward(x)
+
+class IRC_Block(nn.Module):
+    def __init__(self, in_feats, out_feats, expand_ratio=6):
+        super().__init__()
+        mid_feats = round(in_feats * expand_ratio)
+        self.idt = (in_feats == out_feats)
+        self.srt = nn.Sequential(
+            nn.Conv2d(in_feats, out_feats, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(out_feats)
+        )
+        self.irb = nn.Sequential(
+            # point-wise conv
+            nn.Conv2d(in_feats, mid_feats, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(mid_feats),
+            nn.ReLU6(inplace=True),
+            # depth-wise conv
+            nn.Conv2d(mid_feats, mid_feats, kernel_size=3, stride=1, padding=1, groups=mid_feats, bias=False),
+            nn.BatchNorm2d(mid_feats),
+            nn.ReLU6(inplace=True),
+            # point-wise conv
+            nn.Conv2d(mid_feats, out_feats, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(out_feats),
+        )
+
+    def forward(self, x):
+        return (x + self.irb(x)) if self.idt else (self.srt(x) + self.irb(x))
 
 class DepResidualBasicBlock(nn.Module):
     def __init__(self, in_feats):
@@ -414,7 +440,9 @@ def customized_module(info, feats):
             'rdb': ResidualDecBlock,
             'luu': LearnedUpUnit,
             'irb': IRB_Block,
-            'irr': IRR_Block
+            'irc': IRC_Block,
+            'irr': IRR_Block,
+            'seb': SE_Block
         }
     # Format1: 'xxx[a->b]', i.e. 'module[in_feats->out_feats]'
     # Format2: 'xxx(a)', i.e. 'module(feats)'
@@ -493,3 +521,17 @@ class BasicBlock(nn.Module):
         out = self.relu(out)
 
         return out
+
+class SE_Block(nn.Module):
+    def __init__(self, in_feats, r=16):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.Conv2d(in_feats, in_feats // r, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_feats // r, in_feats, kernel_size=1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        w = self.fc(F.adaptive_avg_pool2d(x, 1))
+        return w * x

@@ -9,6 +9,7 @@ def dump_results():
 
     res_miou = []
     res_pixacc = []
+    res_time = []
     for file in file_list:
         with open(file, 'r') as f:
             res = f.read()
@@ -16,6 +17,7 @@ def dump_results():
                 print('Skipped [%s] since it\'s too short.' % file)
                 res_miou.append('TBD')
                 res_pixacc.append('TBD')
+                res_time.append('TBD')
                 continue
             res = res[-300:].split('\n')
             if 'Performance of last 5 epochs' in res:
@@ -23,18 +25,22 @@ def dump_results():
                 res_miou1 = eval(res[6].split(': ')[-1])
                 res_pixacc1 = eval(res[7].split(': ')[-1])
                 res_miou2, res_pixacc2 = eval(res[8].split(': ')[-1])
+                res_t = res[10].split(': ')[-1]
                 # print(res_miou1, res_miou2)
                 # print(res_pixacc1, res_pixacc1)
                 res_miou.append('%.4f / %.4f' % (res_miou1, res_miou2))
                 res_pixacc.append('%.4f / %.4f' % (res_pixacc1, res_pixacc2))
+                res_time.append('%d epochs / %s' % (600, res_t))
             else:
                 print('Skipped [%s] since it\'s incomplete.' % file)
                 res_miou.append('TBD')
                 res_pixacc.append('TBD')
+                res_time.append('TBD')
     
     print('[mIoU]:', '\n'.join(res_miou), sep='\n')
     print('\n[Pix_Acc]:', '\n'.join(res_pixacc), sep='\n')
-    
+    print('\n[Time]:', '\n'.join(res_time), sep='\n')
+
 
 if __name__ == '__main__':
     dump_results()

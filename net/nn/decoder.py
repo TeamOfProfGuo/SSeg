@@ -233,13 +233,22 @@ class CC3I_Level_Fuse(nn.Module):
         feats = torch.cat((x, y), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
         return self.rcci(feats)
 
+class SEA_Level_Fuse(nn.Module):
+    def __init__(self, in_feats, *args, **kwargs):
+        super().__init__()
+        self.att1 = SE_Block(in_feats)
+        self.att2 = SE_Block(in_feats)
+        
+    def forward(self, x, y):
+        return self.att1(x) + self.att2(y)
+
 class Base_Level_Fuse(nn.Module):
     def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False), lf_bb='rbb[2->2]', lf_args={}):
         super().__init__()
         self.conv_flag = conv_flag
         fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse,
                      'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse,
-                     'cc3i': CC3I_Level_Fuse, 'ina': INA_Level_Fuse}
+                     'cc3i': CC3I_Level_Fuse, 'ina': INA_Level_Fuse, 'sea': SEA_Level_Fuse}
         self.fuse = fuse_dict[fuse_mode](in_feats, **lf_args)
         self.rfb0 = customized_module(lf_bb, in_feats) if conv_flag[0] else nn.Identity()
         self.rfb1 = customized_module(lf_bb, in_feats) if conv_flag[1] else nn.Identity()
