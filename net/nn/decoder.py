@@ -11,7 +11,7 @@ __all__ = ['Decoder']
 class Decoder(nn.Module):
     def __init__(self, decoder_feat, n_classes, decoder='base', decoder_args={}):
         super().__init__()
-        decoder_dict = {'base': Base_Decoder, 'refine': Refine_Decoder, 'gf': GF_Decoder}
+        decoder_dict = {'base': Base_Decoder, 'refine': Refine_Decoder, 'gf': GF_Decoder, 'cc': CC_Decoder}
         self.decoder = decoder_dict[decoder](decoder_feat, n_classes, **decoder_args)
     
     def forward(self, feats):
@@ -48,6 +48,54 @@ class Base_Decoder(nn.Module):
         feats = self.refine1(self.up1(feats), x2)
         feats = self.refine2(self.up2(feats), x1)
         return self.out_conv(feats)
+
+class CC_Decoder(nn.Module):
+    def __init__(self, decoder_feat, n_classes, feats='f', k=1, init_args={}):
+        super().__init__()
+        self.feats = feats
+        self.rd_conv1 = nn.Conv2d( 64, n_classes, kernel_size=1, stride=1, padding=0)
+        self.rd_conv2 = nn.Conv2d(128, n_classes, kernel_size=1, stride=1, padding=0)
+        self.rd_conv3 = nn.Conv2d(256, n_classes, kernel_size=1, stride=1, padding=0)
+        self.rd_conv4 = nn.Conv2d(512, n_classes, kernel_size=1, stride=1, padding=0)
+        self.out_block = CC_Merge(n_classes, k, init_args)
+
+    def forward(self, feats):
+        if self.feats == 'l':
+            x1, x2, x3, x4 = feats.l1, feats.l2, feats.l3, feats.l4
+        elif self.feats == 'd':
+            x1, x2, x3, x4 = feats.d1, feats.d2, feats.d3, feats.d4
+        elif self.feats == 'f':
+            x1, x2, x3, x4 = feats.f1, feats.f2, feats.f3, feats.f4
+        else:
+            raise ValueError('Invalid out feats: %s.' % self.feats)
+        
+        x1 = self.rd_conv1(x1)
+        x2 = self.rd_conv2(x2)
+        x3 = self.rd_conv3(x3)
+        x4 = self.rd_conv4(x4)
+
+        return self.out_block(x1, x2, x3, x4)
+         
+class CC_Merge(nn.Module):
+    def __init__(self, n_classes, k=1, init_args={}):
+        super().__init__()
+        pd_layer = nn.ZeroPad2d((1, 1, 1, 1)) if k == 3 else nn.Identity()
+        cc_layer = nn.Conv2d(4*n_classes, n_classes, kernel_size=1, padding=0, groups=n_classes, bias=True)
+        up_layer = out_block(None, None, n_classes, module='cc-merge')
+        if len(init_args) > 0:
+            cc_layer.weight.data = init_conv(n_classes, 4, k, **init_args)
+        self.merge = nn.Sequential(pd_layer, cc_layer, up_layer)
+        
+    def forward(self, x1, x2, x3, x4):
+        b, c, _, _ = x1.size()
+        h = max(map(lambda x:x.size()[2], (x1, x2, x3, x4)))
+        w = max(map(lambda x:x.size()[3], (x1, x2, x3, x4)))
+        x1 = interpolate(x1, (h, w), mode='nearest')
+        x2 = interpolate(x2, (h, w), mode='nearest')
+        x3 = interpolate(x3, (h, w), mode='nearest')
+        x4 = interpolate(x4, (h, w), mode='nearest')
+        feats = torch.cat((x1, x2, x3, x4), dim=-2).reshape(b, 4*c, h, w)   # [b, c, 4h, w] => [b, 4c, h, w]
+        return self.merge(feats)
 
 class Refine_Decoder(nn.Module):
     def __init__(self, decoder_feat, n_classes, feats='f'):
@@ -242,13 +290,23 @@ class SEA_Level_Fuse(nn.Module):
     def forward(self, x, y):
         return self.att1(x) + self.att2(y)
 
+class PDL_Level_Fuse(nn.Module):
+    def __init__(self, in_feats, *args, **kwargs):
+        super().__init__()
+        self.att1 = PDL_Block(in_feats)
+        self.att2 = PDL_Block(in_feats)
+        
+    def forward(self, x, y):
+        return self.att1(x) + self.att2(y)
+
 class Base_Level_Fuse(nn.Module):
     def __init__(self, in_feats, fuse_mode='na', conv_flag=(True, False), lf_bb='rbb[2->2]', lf_args={}):
         super().__init__()
         self.conv_flag = conv_flag
         fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse,
                      'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse,
-                     'cc3i': CC3I_Level_Fuse, 'ina': INA_Level_Fuse, 'sea': SEA_Level_Fuse}
+                     'cc3i': CC3I_Level_Fuse, 'ina': INA_Level_Fuse, 'sea': SEA_Level_Fuse,
+                     'pdl': PDL_Level_Fuse}
         self.fuse = fuse_dict[fuse_mode](in_feats, **lf_args)
         self.rfb0 = customized_module(lf_bb, in_feats) if conv_flag[0] else nn.Identity()
         self.rfb1 = customized_module(lf_bb, in_feats) if conv_flag[1] else nn.Identity()

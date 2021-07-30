@@ -17,7 +17,7 @@ def dump_results():
                 print('Skipped [%s] since it\'s too short.' % file)
                 res_miou.append('TBD')
                 res_pixacc.append('TBD')
-                res_time.append('TBD')
+                res_time.append('600 epochs / h')
                 continue
             res = res[-300:].split('\n')
             if 'Performance of last 5 epochs' in res:
@@ -35,7 +35,7 @@ def dump_results():
                 print('Skipped [%s] since it\'s incomplete.' % file)
                 res_miou.append('TBD')
                 res_pixacc.append('TBD')
-                res_time.append('TBD')
+                res_time.append('600 epochs / h')
     
     print('[mIoU]:', '\n'.join(res_miou), sep='\n')
     print('\n[Pix_Acc]:', '\n'.join(res_pixacc), sep='\n')

@@ -871,6 +871,36 @@ class SAM_Block(torch.nn.Module):
         y = x_minus_mu_square / (4 * (x_minus_mu_square.sum(dim=[2,3], keepdim=True) / n + self.lamb)) + 0.5
         return x * self.act(y)
 
+class SPGC_Block(nn.Module):
+    def __init__(self, in_feats, pp_size=(1, 3, 5, 7), act='idt'):
+        super().__init__()
+        act_dict = {
+            'idt': nn.Identity(),
+            'relu': nn.ReLU(),
+            'sigmoid': nn.Sigmoid(),
+            'tanh': nn.Tanh()
+        }
+        self.pp_size = pp_size
+        self.cnt_conv = nn.Sequential(
+            nn.Conv2d(in_feats, 1, kernel_size=1),
+            act_dict[act]
+        )
+        for s in pp_size:
+            self.add_module('pool%d' % s, nn.AdaptiveAvgPool2d(s))
+        self.att_conv = nn.Sequential(
+            nn.Conv2d(len(pp_size)+1, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        _, _, h, w = x.size()
+        pgc_feats = [self.cnt_conv(x)]
+        for s in self.pp_size:
+            layer = self.__getattr__('pool%d' % s)(pgc_feats[0])
+            pgc_feats.append(interpolate(layer, (h, w), 'nearest'))
+        pgc_weights = self.att_conv(torch.cat(tuple(pgc_feats), dim=1))
+        return pgc_weights * x
+
 class SE_Block(nn.Module):
     def __init__(self, in_feats, mid_factor=16):
         super().__init__()
@@ -1104,4 +1134,4 @@ ATT_MODULE_DICT = {'gc': GC_Block, 'se': SE_Block, 'spa': SPA_Block, 'pp': PP_Bl
                    'sc': SC_Block, 'psc': PSC_Block, 'pca': PCA_Block, 'idt': Identity_ARM,
                    'lgc': LGC_Block, 'pgc': PGC_Block, 'gam': GAM_Block, 'agam': AGAM_Block,
                    'bgam': BGAM_Block, 'cgam': CGAM_Block, 'dgam': DGAM_Block, 'sam': SAM_Block,
-                   'pdle': PDLE_Block}
+                   'pdle': PDLE_Block, 'spgc': SPGC_Block}

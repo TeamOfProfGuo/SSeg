@@ -4,8 +4,9 @@ from torch import nn
 from torch.nn import functional as F
 
 __all__ = ['ConvBnAct', 'ResidualBasicBlock', 'ResidualDecBlock', 'NBC_Block', 'LU_Unit',
-           'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock', 'SE_Block',
-           'interpolate', 'up_block', 'out_block', 'init_conv', 'customized_module']
+           'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock', 'SE_Block', 'PDL_Block',
+           'interpolate', 'up_block', 'out_block', 'init_conv', 
+           'customized_module', 'customized_module_seq']
 
 class ConvBnAct(nn.Sequential):
     def __init__(self, in_feats, out_feats, kernel=3, stride=1, pad=1, bias=False, conv_args = {},
@@ -401,6 +402,11 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
             LearnedUpUnit(n_classes),
             LearnedUpUnit(n_classes)
         )
+    elif module == 'cc-merge':
+        return nn.Sequential(
+            LearnedUpUnit(n_classes),
+            LearnedUpUnit(n_classes)
+        )
     elif module == 'nbc':
         return nn.Sequential(
             nn.Conv2d(in_feats, n_classes, kernel_size=3, padding=1),
@@ -455,6 +461,9 @@ def customized_module(info, feats):
         return module_dict[module_name]((int(info[4]) * feats // 2), (int(info[7]) * feats // 2))
     else:
         raise ValueError('Invalid customized module format: %s' % info)
+
+def customized_module_seq(seq, feats):
+    return nn.Sequential(*[customized_module(info, feats) for info in seq.split()])
 
 class SAM_Block(torch.nn.Module):
     def __init__(self, in_feats, lamb=1e-4):
@@ -534,4 +543,31 @@ class SE_Block(nn.Module):
 
     def forward(self, x):
         w = self.fc(F.adaptive_avg_pool2d(x, 1))
+        return w * x
+    
+class PDL_Block(nn.Module):
+    def __init__(self, in_feats, pp_layer=4, descriptor=8, mid_feats=16):
+        super().__init__()
+        self.layer_size = pp_layer                  # l: pyramid layer num
+        self.feats_size = (4 ** pp_layer - 1) // 3  # f: feats for descritor
+        self.descriptor = descriptor                # d: descriptor num (for one channel)
+
+        self.des = nn.Conv2d(self.feats_size, descriptor, kernel_size=1)
+        self.mlp = nn.Sequential(
+            nn.Linear(descriptor * in_feats, mid_feats, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_feats, in_feats),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        l, f, d = self.layer_size, self.feats_size, self.descriptor
+        pooling_pyramid = []
+        for i in range(l):
+            pooling_pyramid.append(F.adaptive_avg_pool2d(x, 2 ** i).view(b, c, 1, -1))
+        y = torch.cat(tuple(pooling_pyramid), dim=-1)   # [b,  c, 1, f]
+        y = y.reshape(b*c, f, 1, 1)                     # [bc, f, 1, 1]
+        y = self.des(y).view(b, c*d)                    # [bc, d, 1, 1] => [b, cd, 1, 1]
+        w = self.mlp(y).view(b, c, 1, 1)                # [b,  c, 1, 1] => [b, c, 1, 1]
         return w * x
