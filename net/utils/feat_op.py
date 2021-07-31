@@ -4,7 +4,8 @@ from torch import nn
 from torch.nn import functional as F
 
 __all__ = ['ConvBnAct', 'ResidualBasicBlock', 'ResidualDecBlock', 'NBC_Block', 'LU_Unit',
-           'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock', 'SE_Block', 'PDL_Block',
+           'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock', 
+           'IRB_Block', 'SE_Block', 'PDL_Block', 'IDT_Block',
            'interpolate', 'up_block', 'out_block', 'init_conv', 
            'customized_module', 'customized_module_seq']
 
@@ -571,3 +572,10 @@ class PDL_Block(nn.Module):
         y = self.des(y).view(b, c*d)                    # [bc, d, 1, 1] => [b, cd, 1, 1]
         w = self.mlp(y).view(b, c, 1, 1)                # [b,  c, 1, 1] => [b, c, 1, 1]
         return w * x
+
+class IDT_Block(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    def forward(self, x):
+        return x

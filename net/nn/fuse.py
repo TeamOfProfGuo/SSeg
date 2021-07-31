@@ -9,18 +9,23 @@ from net.utils.feat_op import interpolate, init_conv
 __all__ = ['Fuse_Block', 'Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse', 
            'PPE_Block', 'PPCE_Block', 'PDLC_Fuse']
 
-PCA_FUSE_LAMB = False
-
 class Fuse_Block(nn.Module):
     def __init__(self, in_feats, fb='simple', fuse_args={}):
         super().__init__()
         fuse_dict = {'simple': Simple_RGBD_Fuse, 'fuse': RGBD_Fuse_Block, 'gau': GAU_Fuse, 
                      'gf': GF_Module, 'pdlc': PDLC_Fuse, 'lgc': LGC_Fuse, 'cc': CC_Fuse,
-                     'rcc': RCC_Fuse, 'rcci': RCCI_Fuse}
+                     'rcc': RCC_Fuse, 'rcci': RCCI_Fuse, 'idt': Identity_Fuse}
         self.fb = fuse_dict[fb](in_feats, **fuse_args)
         
     def forward(self, rgb, dep):
         return self.fb(rgb, dep)
+
+class Identity_Fuse(nn.Module):
+    def __init__(self, in_feats, **kwargs):
+        super().__init__()
+        
+    def forward(self, x, d):
+        return x, d
 
 class Simple_RGBD_Fuse(nn.Module):
     def __init__(self, in_feats, **kwargs):
@@ -663,7 +668,7 @@ class PCA_Block(nn.Module):
         self.pam = PSC_Block(in_feats)
         self.cam = PDL_Block(in_feats)
         if mode == 'add':
-            self.use_lamb = PCA_FUSE_LAMB
+            self.use_lamb = False
             self.lamb = nn.Parameter(torch.zeros(1))
             print('[PCA]: use_lamb =', self.use_lamb)
     

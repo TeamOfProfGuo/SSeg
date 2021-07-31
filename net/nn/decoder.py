@@ -11,7 +11,8 @@ __all__ = ['Decoder']
 class Decoder(nn.Module):
     def __init__(self, decoder_feat, n_classes, decoder='base', decoder_args={}):
         super().__init__()
-        decoder_dict = {'base': Base_Decoder, 'refine': Refine_Decoder, 'gf': GF_Decoder, 'cc': CC_Decoder}
+        decoder_dict = {'base': Base_Decoder, 'refine': Refine_Decoder, 'gf': GF_Decoder, 
+                        'cc': CC_Decoder, 'cc-rgbd': CC_RGBD_Decoder}
         self.decoder = decoder_dict[decoder](decoder_feat, n_classes, **decoder_args)
     
     def forward(self, feats):
@@ -50,13 +51,25 @@ class Base_Decoder(nn.Module):
         return self.out_conv(feats)
 
 class CC_Decoder(nn.Module):
-    def __init__(self, decoder_feat, n_classes, feats='f', k=1, init_args={}):
+    def __init__(self, decoder_feat, n_classes, feats='f', rd_conv='conv', k=1, init_args={}):
         super().__init__()
         self.feats = feats
-        self.rd_conv1 = nn.Conv2d( 64, n_classes, kernel_size=1, stride=1, padding=0)
-        self.rd_conv2 = nn.Conv2d(128, n_classes, kernel_size=1, stride=1, padding=0)
-        self.rd_conv3 = nn.Conv2d(256, n_classes, kernel_size=1, stride=1, padding=0)
-        self.rd_conv4 = nn.Conv2d(512, n_classes, kernel_size=1, stride=1, padding=0)
+        feats_size = [64, 128, 256, 512]
+        if rd_conv == 'conv':
+            for i in range(len(feats_size)):
+                self.add_module('rd_conv%d' % (i+1),
+                nn.Conv2d(feats_size[i], n_classes, kernel_size=1, stride=1, padding=0)
+            )
+        elif rd_conv == 'rdb':
+            for i in range(len(feats_size)):
+                self.add_module('rd_conv%d' % (i+1),
+                ResidualDecBlock(feats_size[i], n_classes)
+            )
+        elif rd_conv == 'irb':
+            for i in range(len(feats_size)):
+                self.add_module('rd_conv%d' % (i+1),
+                IRB_Block(feats_size[i], n_classes)
+            )
         self.out_block = CC_Merge(n_classes, k, init_args)
 
     def forward(self, feats):
@@ -75,7 +88,7 @@ class CC_Decoder(nn.Module):
         x4 = self.rd_conv4(x4)
 
         return self.out_block(x1, x2, x3, x4)
-         
+
 class CC_Merge(nn.Module):
     def __init__(self, n_classes, k=1, init_args={}):
         super().__init__()
@@ -95,6 +108,42 @@ class CC_Merge(nn.Module):
         x3 = interpolate(x3, (h, w), mode='nearest')
         x4 = interpolate(x4, (h, w), mode='nearest')
         feats = torch.cat((x1, x2, x3, x4), dim=-2).reshape(b, 4*c, h, w)   # [b, c, 4h, w] => [b, 4c, h, w]
+        return self.merge(feats)
+
+class CC_RGBD_Decoder(nn.Module):
+    def __init__(self, decoder_feat, n_classes, feats='f', rd_conv='conv', k=1, init_args={}):
+        super().__init__()
+        self.feats = feats
+        feats_size = [64, 128, 256, 512]
+        for i in range(len(feats_size)):
+            self.add_module('rgb_rd%d' % (i+1), IRB_Block(feats_size[i], n_classes))
+            self.add_module('dep_rd%d' % (i+1), IRB_Block(feats_size[i], n_classes))
+        self.out_block = CC_RGBD_Merge(n_classes, k, init_args)
+
+    def forward(self, feats):        
+        refined_feats = []
+        for i in range(1, 5):
+            refined_feats.append(self.__getattr__('rgb_rd%d' % i)(feats['l%d' % i]))
+            refined_feats.append(self.__getattr__('dep_rd%d' % i)(feats['d%d' % i]))
+        return self.out_block(refined_feats)
+
+class CC_RGBD_Merge(nn.Module):
+    def __init__(self, n_classes, k=1, init_args={}):
+        super().__init__()
+        pd_layer = nn.ZeroPad2d((1, 1, 1, 1)) if k == 3 else nn.Identity()
+        cc_layer = nn.Conv2d(8*n_classes, n_classes, kernel_size=1, padding=0, groups=n_classes, bias=True)
+        up_layer = out_block(None, None, n_classes, module='cc-merge')
+        if len(init_args) > 0:
+            cc_layer.weight.data = init_conv(n_classes, 8, k, **init_args)
+        self.merge = nn.Sequential(pd_layer, cc_layer, up_layer)
+        
+    def forward(self, feats):
+        b, c, _, _ = feats[0].size()
+        h = max(map(lambda x:x.size()[2], feats))
+        w = max(map(lambda x:x.size()[3], feats))
+        for i in range(len(feats)):
+            feats[i] = interpolate(feats[i], (h, w), mode='nearest')
+        feats = torch.cat(tuple(feats), dim=-2).reshape(b, 8*c, h, w)   # [b, c, 8h, w] => [b, 8c, h, w]
         return self.merge(feats)
 
 class Refine_Decoder(nn.Module):
@@ -281,6 +330,45 @@ class CC3I_Level_Fuse(nn.Module):
         feats = torch.cat((x, y), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
         return self.rcci(feats)
 
+class RCCI_Block(nn.Module):
+    def __init__(self, in_feats, pad_mode='zero', kernel=1, act='relu', init_args={}):
+        super().__init__()
+        pad_size = tuple([kernel // 2] * 4)
+        act_dict = {'idt': nn.Identity(), 'relu': nn.ReLU(inplace=True)}
+
+        pad_layer = nn.ZeroPad2d(pad_size) if pad_mode == 'zero' else nn.ReplicationPad2d(pad_size)
+        conv_layer = nn.Conv2d(2*in_feats, in_feats, kernel_size=kernel, padding=0, groups=in_feats, bias=True)
+        if init_args['mode'] != 'rand':
+            print('[RCCI]: Using customized conv init.')
+            conv_layer.weight.data = init_conv(in_feats, 2, kernel, **init_args)
+        act_layer = act_dict[act]
+
+        self.rcci = nn.Sequential(pad_layer, conv_layer, act_layer)
+        
+    def forward(self, x, y):
+        b, c, h, w = x.size()
+        feats = torch.cat((x, y), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
+        return self.rcci(feats)
+
+class RCCI_Level_Fuse(nn.Module):
+    def __init__(self, in_feats, fuse_setting={}, att_module='idt', att_setting={}):
+        super().__init__()
+        module_dict = {
+            'idt': IDT_Block,
+            'se': SE_Block,
+            'pdl': PDL_Block
+        }
+        self.att_module = att_module
+        self.x_pre = module_dict[att_module](in_feats, **att_setting)
+        self.y_pre = module_dict[att_module](in_feats, **att_setting)
+        self.fuse_block = RCCI_Block(in_feats, **fuse_setting)
+    
+    def forward(self, x, y):
+        if self.att_module != 'idt':
+            x = self.x_pre(x)
+            y = self.y_pre(y)
+        return self.fuse_block(x, y)
+
 class SEA_Level_Fuse(nn.Module):
     def __init__(self, in_feats, *args, **kwargs):
         super().__init__()
@@ -306,7 +394,7 @@ class Base_Level_Fuse(nn.Module):
         fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse,
                      'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse,
                      'cc3i': CC3I_Level_Fuse, 'ina': INA_Level_Fuse, 'sea': SEA_Level_Fuse,
-                     'pdl': PDL_Level_Fuse}
+                     'pdl': PDL_Level_Fuse, 'rcci': RCCI_Level_Fuse}
         self.fuse = fuse_dict[fuse_mode](in_feats, **lf_args)
         self.rfb0 = customized_module(lf_bb, in_feats) if conv_flag[0] else nn.Identity()
         self.rfb1 = customized_module(lf_bb, in_feats) if conv_flag[1] else nn.Identity()
