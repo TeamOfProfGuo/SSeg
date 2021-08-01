@@ -5,7 +5,7 @@ from torch.nn import functional as F
 
 __all__ = ['ConvBnAct', 'ResidualBasicBlock', 'ResidualDecBlock', 'NBC_Block', 'LU_Unit',
            'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock', 
-           'IRB_Block', 'SE_Block', 'PDL_Block', 'IDT_Block',
+           'IRB_Block', 'SE_Block', 'PDL_Block', 'IDT_Block', 'GCGF_Module',
            'interpolate', 'up_block', 'out_block', 'init_conv', 
            'customized_module', 'customized_module_seq']
 
@@ -61,22 +61,48 @@ class IRB_Block(nn.Module):
                 nn.BatchNorm2d(out_feats),
                 act_layer
             )
-        # self._initialize_weights()
+
+    def forward(self, x):
+        return (x + self.irb(x)) if self.idt else self.irb(x)
+
+class IRI_Block(nn.Module):
+    def __init__(self, in_feats, out_feats=None, act='idt', expand_ratio=6):
+        super().__init__()
+        mid_feats = round(in_feats * expand_ratio)
+        out_feats = in_feats if out_feats is None else out_feats
+        act_layer = nn.Identity() if act == 'idt' else nn.ReLU6(inplace=True)
+        self.idt = (in_feats == out_feats)
+        self.irb = nn.Sequential(
+                # point-wise conv
+                nn.Conv2d(in_feats, mid_feats, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(mid_feats),
+                nn.ReLU6(inplace=True),
+                # depth-wise conv
+                nn.Conv2d(mid_feats, mid_feats, kernel_size=3, stride=1, padding=1, groups=mid_feats, bias=False),
+                nn.BatchNorm2d(mid_feats),
+                nn.ReLU6(inplace=True),
+                # point-wise conv
+                nn.Conv2d(mid_feats, out_feats, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(out_feats),
+                act_layer
+            )
+        self._initialize_weights()
 
     def forward(self, x):
         return (x + self.irb(x)) if self.idt else self.irb(x)
     
-    # def _initialize_weights(self):
-    #     from math import sqrt
-    #     for m in self.modules():
-    #         if isinstance(m, nn.Conv2d):
-    #             n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-    #             m.weight.data.normal_(0, sqrt(2. / n))
-    #             if m.bias is not None:
-    #                 m.bias.data.zero_()
-    #         elif isinstance(m, nn.BatchNorm2d):
-    #             m.weight.data.fill_(1)
-    #             m.bias.data.zero_()
+    def _initialize_weights(self):
+        # from math import sqrt
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                pass
+                # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                # m.weight.data.normal_(0, sqrt(2. / n))
+                # if m.bias is not None:
+                #     m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
 class IRR_Block(IRB_Block):
     def __init__(self, in_feats, out_feats=None, act='relu6', expand_ratio=6):
@@ -455,7 +481,7 @@ def customized_module(info, feats):
     # Format2: 'xxx(a)', i.e. 'module(feats)'
     module_name = info[:3]
     assert module_name in module_dict
-    print(info)
+    # print(info)
     if info.find('(') != -1:
         return module_dict[module_name]((int(info[4]) * feats // 2))
     elif info.find('[') != -1:
@@ -579,3 +605,75 @@ class IDT_Block(nn.Module):
 
     def forward(self, x):
         return x
+
+class GCGF_Block(nn.Module):
+    def __init__(self, in_feats, pre_bn=False, merge='gcgf', init=[False, True], civ=1):
+        super().__init__()
+        merge_dict = {
+            'gcgf': nn.Conv2d(2*in_feats, in_feats, kernel_size=1, padding=0, groups=in_feats, bias=True),
+            'add': Add_Merge(in_feats),
+            'cc3': CC3_Merge(in_feats)
+        }
+        if pre_bn:
+            self.pre_bn1 = nn.BatchNorm2d(in_feats)
+            self.pre_bn2 = nn.BatchNorm2d(in_feats)
+        self.pre_bn = pre_bn
+        self.merge_mode = merge
+        self.merge = merge_dict[merge]
+        self._init_weights(init, civ)
+        
+    def forward(self, x, y):
+        b, c, h, w = x.size()
+        if self.pre_bn:
+            x = self.pre_bn1(x)
+            y = self.pre_bn2(y)
+        if self.merge_mode != 'gcgf':
+            return self.merge(x, y)
+        feats = torch.cat((x, y), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
+        return self.merge(feats)
+            
+    def _init_weights(self, init, civ):
+        if init[0] and self.pre_bn:
+            self.pre_bn1.weight.data.fill_(1)
+            self.pre_bn2.weight.data.fill_(1)
+            self.pre_bn1.bias.data.zero_()
+            self.pre_bn2.bias.data.zero_()
+        if init[1] and isinstance(self.merge, nn.Conv2d):
+            self.merge.weight.data.fill_(civ)
+
+class GCGF_Module(nn.Module):
+    def __init__(self, in_feats, fuse_setting={}, att_module='idt', att_setting={}):
+        super().__init__()
+        module_dict = {
+            'idt': IDT_Block,
+            'se': SE_Block,
+            'pdl': PDL_Block
+        }
+        self.att_module = att_module
+        self.pre1 = module_dict[att_module](in_feats, **att_setting)
+        self.pre2 = module_dict[att_module](in_feats, **att_setting)
+        self.gcgf = GCGF_Block(in_feats, **fuse_setting)
+    
+    def forward(self, x, y):
+        if self.att_module != 'idt':
+            x = self.pre1(x)
+            y = self.pre2(y)
+        return self.gcgf(x, y)
+
+class Add_Merge(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        
+    def forward(self, x, y):
+        return x+y
+
+class CC3_Merge(nn.Module):
+    def __init__(self, in_feats, *args, **kwargs):
+        super().__init__()
+        self.cc_block = nn.Sequential(
+            nn.Conv2d(2 * in_feats, in_feats, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.ReLU(inplace=True)
+        )
+        
+    def forward(self, x, y):
+        return self.cc_block(torch.cat((x, y), dim=1))

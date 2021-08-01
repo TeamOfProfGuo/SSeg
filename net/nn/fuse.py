@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from .gf import GF_Module
-from net.utils.feat_op import interpolate, init_conv
+from net.utils.feat_op import interpolate, init_conv, GCGF_Module
 
 __all__ = ['Fuse_Block', 'Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse', 
            'PPE_Block', 'PPCE_Block', 'PDLC_Fuse']
@@ -12,13 +12,34 @@ __all__ = ['Fuse_Block', 'Simple_RGBD_Fuse', 'RGBD_Fuse_Block', 'GAU_Fuse',
 class Fuse_Block(nn.Module):
     def __init__(self, in_feats, fb='simple', fuse_args={}):
         super().__init__()
-        fuse_dict = {'simple': Simple_RGBD_Fuse, 'fuse': RGBD_Fuse_Block, 'gau': GAU_Fuse, 
-                     'gf': GF_Module, 'pdlc': PDLC_Fuse, 'lgc': LGC_Fuse, 'cc': CC_Fuse,
-                     'rcc': RCC_Fuse, 'rcci': RCCI_Fuse, 'idt': Identity_Fuse}
+        fuse_dict = {
+            'simple': Simple_RGBD_Fuse, 'fuse': RGBD_Fuse_Block, 'gau': GAU_Fuse, 
+            'gf': GF_Module, 'pdlc': PDLC_Fuse, 'lgc': LGC_Fuse, 'cc': CC_Fuse,
+            'rcc': RCC_Fuse, 'rcci': RCCI_Fuse, 'gcgf': GCGF_Fuse,
+            'idt': Identity_Fuse
+        }
         self.fb = fuse_dict[fb](in_feats, **fuse_args)
         
     def forward(self, rgb, dep):
         return self.fb(rgb, dep)
+
+class GCGF_Fuse(nn.Module):
+    def __init__(self, in_feats, gcgf_args={}):
+        super().__init__()
+        self.rgb_out = GCGF_Module(in_feats, **gcgf_args)
+    
+    def forward(self, rgb, dep):
+        return self.rgb_out(rgb, dep), dep
+
+# class GCGF_Fuse(nn.Module):
+#     def __init__(self, in_feats, gcgf_args={}, refine_dep=False):
+#         super().__init__()
+#         self.refine_dep = refine_dep
+#         self.rgb_out = GCGF_Module(in_feats, **gcgf_args)
+#         self.dep_out = GCGF_Module(in_feats, **gcgf_args) if refine_dep else None
+    
+#     def forward(self, rgb, dep):
+#         return self.rgb_out(rgb, dep), (self.dep_out(rgb, dep) if self.refine_dep else dep)
 
 class Identity_Fuse(nn.Module):
     def __init__(self, in_feats, **kwargs):

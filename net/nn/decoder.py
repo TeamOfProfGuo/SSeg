@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from net.nn.gf import *
-from net.utils.feat_op import *
+from net.utils.feat_op import * 
 
 __all__ = ['Decoder']
 
@@ -19,7 +19,7 @@ class Decoder(nn.Module):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, decoder_feat, n_classes, conv_module='cbr', level_fuse='add', feats='f', rf_conv=(True, False), lf_bb='rbb', lf_args={}):
+    def __init__(self, decoder_feat, n_classes, conv_module='rbb', level_fuse='add', feats='f', rf_conv=(True, False), lf_bb='none', lf_args={}):
         super().__init__()
 
         self.feats = feats
@@ -394,7 +394,7 @@ class Base_Level_Fuse(nn.Module):
         fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add, 'max': Max_Level_Fuse,
                      'cc1': CC1_Level_Fuse, 'cc2': CC2_Level_Fuse, 'cc3': CC3_Level_Fuse,
                      'cc3i': CC3I_Level_Fuse, 'ina': INA_Level_Fuse, 'sea': SEA_Level_Fuse,
-                     'pdl': PDL_Level_Fuse, 'rcci': RCCI_Level_Fuse}
+                     'pdl': PDL_Level_Fuse, 'rcci': RCCI_Level_Fuse, 'gcgf': GCGF_Module}
         self.fuse = fuse_dict[fuse_mode](in_feats, **lf_args)
         self.rfb0 = customized_module(lf_bb, in_feats) if conv_flag[0] else nn.Identity()
         self.rfb1 = customized_module(lf_bb, in_feats) if conv_flag[1] else nn.Identity()

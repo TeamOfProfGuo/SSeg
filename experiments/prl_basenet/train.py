@@ -22,7 +22,7 @@ BASE_DIR = os.path.join(os.getcwd(), '../..')
 sys.path.append(BASE_DIR)
 # Path for config and summary files
 TRAIN_PATH = './config/train.yaml'
-CONFIG_PATH = './config/%s.yaml' % sys.argv[1]
+# CONFIG_PATH = './config/%s.yaml' % sys.argv[1]
 SMY_PATH = os.path.join('./results/', sys.argv[1])
 # GPU ids (only when there are multiple GPUs)
 GPUS = [0, 1]
@@ -31,6 +31,7 @@ import net.utils as utils
 from net.nn import SegmentationLoss
 from net.datasets import get_dataset
 from net.models import get_segmentation_model
+from config.config import get_config
 
 class Trainer():
     def __init__(self, args):
@@ -66,7 +67,10 @@ class Trainer():
         self.nclass = trainset.num_class
 
         # config
-        config = Dict(yaml.safe_load(open(CONFIG_PATH)))
+        # config = Dict(yaml.safe_load(open(CONFIG_PATH)))
+        config = get_config(sys.argv[1])
+        for k, v in config.items():
+            print('[%s]: %s' % (k, v))
 
         # model and params
         model = get_segmentation_model(args.model, dataset=args.dataset, backbone=args.backbone, 
@@ -75,8 +79,8 @@ class Trainer():
         print(model)
 
         self.config = model.config
-        for k, v in self.config.items():
-            print('[%s]: %s' % (k, v))
+        # for k, v in self.config.items():
+        #     print('[%s]: %s' % (k, v))
 
         # optimizer using different LR
         base_ids = list(map(id, model.rgb_base.parameters())) + list(map(id, model.dep_base.parameters()))
