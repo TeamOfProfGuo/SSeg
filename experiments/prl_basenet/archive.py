@@ -2,7 +2,24 @@ import os
 import sys
 from shutil import move
 
-def archive_log(dst_dir = './results/', log_dir = './', yaml_dir = './config/'):
+# def archive_log(dst_dir = './results/', log_dir = './', yaml_dir = './config/'):
+#     file_list = os.listdir(log_dir)
+#     # print(file_list)
+#     for file in file_list:
+#         if file.endswith('.log'):
+#             exp = file.split('.')[0]
+#             dst_path = os.path.join(dst_dir, exp)
+#             log_path = os.path.join(log_dir, exp + '.log')
+#             yaml_path = os.path.join(yaml_dir, exp + '.yaml')
+#             # print(dst_path)
+#             # print(log_path)
+#             # print(yaml_path)
+#             if os.path.isfile(log_path) and os.path.isfile(yaml_path) and os.path.isdir(dst_path):
+#                 move(log_path, dst_path)
+#                 move(yaml_path, dst_path)
+#                 print('Exp [%s] archived.' % exp)
+
+def archive_log(dst_dir = './results/', log_dir = './'):
     file_list = os.listdir(log_dir)
     # print(file_list)
     for file in file_list:
@@ -10,14 +27,19 @@ def archive_log(dst_dir = './results/', log_dir = './', yaml_dir = './config/'):
             exp = file.split('.')[0]
             dst_path = os.path.join(dst_dir, exp)
             log_path = os.path.join(log_dir, exp + '.log')
-            yaml_path = os.path.join(yaml_dir, exp + '.yaml')
-            # print(dst_path)
-            # print(log_path)
-            # print(yaml_path)
-            if os.path.isfile(log_path) and os.path.isfile(yaml_path) and os.path.isdir(dst_path):
-                move(log_path, dst_path)
-                move(yaml_path, dst_path)
-                print('Exp [%s] archived.' % exp)
+            with open(log_path, 'r') as f:
+                res = f.read()[-300:].split('\n')
+                end_flag = ('Performance of last 5 epochs' in res)
+            if sys.argv[2] == 'move':
+                if os.path.isfile(log_path) and os.path.isdir(dst_path) and end_flag:
+                    move(log_path, dst_path)
+                    print('Exp [%s] archived.' % exp)
+            else:
+                if end_flag:
+                    print(dst_path)
+                    print(log_path)
+                    print(end_flag)
+            
 
 def archive_path():
     assert len(sys.argv) > 2

@@ -612,7 +612,8 @@ class GCGF_Block(nn.Module):
         merge_dict = {
             'gcgf': nn.Conv2d(2*in_feats, in_feats, kernel_size=1, padding=0, groups=in_feats, bias=True),
             'add': Add_Merge(in_feats),
-            'cc3': CC3_Merge(in_feats)
+            'cc3': CC3_Merge(in_feats),
+            'la': LA_Merge(in_feats)
         }
         if pre_bn:
             self.pre_bn1 = nn.BatchNorm2d(in_feats)
@@ -666,6 +667,14 @@ class Add_Merge(nn.Module):
         
     def forward(self, x, y):
         return x+y
+
+class LA_Merge(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.lamb = nn.Parameter(torch.zeros(1))
+        
+    def forward(self, x, y):
+        return x + self.lamb * y
 
 class CC3_Merge(nn.Module):
     def __init__(self, in_feats, *args, **kwargs):
