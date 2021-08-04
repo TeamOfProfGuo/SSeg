@@ -13,10 +13,8 @@
 module purge
 module load anaconda3/2020.07
 
-echo "copying"
 cp -r /scratch/$USER/dataset/nyud_tmp/ $SLURM_TMPDIR
 cd /scratch/$USER/SSeg/experiments/finalnet/
-echo "done"
 
 source activate dl
 for arg

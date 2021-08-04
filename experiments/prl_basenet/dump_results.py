@@ -1,16 +1,19 @@
 
-def dump_results():
+import os
+
+def dump_results(log_dir='./'):
     
-    fir_half = input('Please enter first half: ')
-    sec_half = '.log' # input('Please enter second half: ')
-    count = int(input('Please enter file num: '))
-    file_list = [('%s%d%s' % (fir_half, i+1, sec_half)) for i in range(count)]
-    print(file_list)
+    # fir_half = input('Please enter first half: ')
+    # sec_half = '.log' # input('Please enter second half: ')
+    # count = int(input('Please enter file num: '))
+    # file_list = [('%s%d%s' % (fir_half, i+1, sec_half)) for i in range(count)]
 
     res_miou = []
     res_pixacc = []
     res_time = []
-    for file in file_list:
+    for file in sorted(os.listdir(log_dir)):
+        if not file.endswith('.log'):
+            continue
         with open(file, 'r') as f:
             res = f.read()
             if len(res) < 310:
