@@ -14,7 +14,7 @@ def get_config(exp_id):
         else:
             raise ValueError('Invalid Config ID: %s.' % exp_id)
         return get_gcgf(GCGF_TEMPLATE, GCGF_ARGS_0801[idx], DECODER_ARGS[1])
-    elif date == '0802':
+    elif date in ('0802', '0804'):
         decoder_dict = {'a': 1, 'b': 2, 'c': 3}
         decoder_idx = decoder_dict[idx[0]]
         fuse1_idx = int(idx[1])
@@ -188,6 +188,26 @@ GCGF_ARGS = {
         'att_module': 'idt',
         'att_setting': {}
     },
+    0: {
+        'fuse_setting': {
+            'pre_bn': False,
+            'merge': 'gcgf',
+            'init': [False, True],
+            'civ': -1
+        },
+        'att_module': 'pdl',
+        'att_setting': {}
+    },
+    9: {
+        'fuse_setting': {
+            'pre_bn': False,
+            'merge': 'gcgf',
+            'init': [False, True],
+            'civ': -1
+        },
+        'att_module': 'idt',
+        'att_setting': {}
+    }
 }
 
 GCGF_ARGS_0801 = {

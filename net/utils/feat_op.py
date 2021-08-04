@@ -444,6 +444,7 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
         raise NotImplementedError('Invalid decoder module: %s.' % module)
 
 def init_conv(r, c=2, k=1, mode='a', decay1=-1, decay2=1e-2):
+    print('init conv: ', r, c, k, mode, decay2)
     # kernel that mimics bilinear interpolation
     w0 = torch.tensor([[[
                 [0.0625, 0.1250, 0.0625],
@@ -619,6 +620,7 @@ class GCGF_Block(nn.Module):
             self.pre_bn1 = nn.BatchNorm2d(in_feats)
             self.pre_bn2 = nn.BatchNorm2d(in_feats)
         self.pre_bn = pre_bn
+        self.feats = in_feats
         self.merge_mode = merge
         self.merge = merge_dict[merge]
         self._init_weights(init, civ)
@@ -640,7 +642,10 @@ class GCGF_Block(nn.Module):
             self.pre_bn1.bias.data.zero_()
             self.pre_bn2.bias.data.zero_()
         if init[1] and isinstance(self.merge, nn.Conv2d):
-            self.merge.weight.data.fill_(civ)
+            if civ == -1:
+                self.merge.weight.data = init_conv(self.feats, 2, 1, 'b')
+            else:
+                self.merge.weight.data.fill_(civ)
 
 class GCGF_Module(nn.Module):
     def __init__(self, in_feats, fuse_setting={}, att_module='idt', att_setting={}):
