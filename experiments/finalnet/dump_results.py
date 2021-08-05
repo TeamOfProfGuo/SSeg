@@ -15,6 +15,7 @@ def dump_results(log_dir='./'):
     for file in sorted(os.listdir(log_dir)):
         if not file.endswith('.log'):
             continue
+        print(os.path.basename(file))
         with open(file, 'r') as f:
             res = f.read()
             if len(res) < 310:
