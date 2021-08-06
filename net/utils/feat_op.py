@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 
 __all__ = ['ConvBnAct', 'ResidualBasicBlock', 'ResidualDecBlock', 'NBC_Block', 'LU_Unit',
-           'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock', 
+           'DepConvBnAct', 'DepResidualBasicBlock', 'DepResidualDecBlock', 'FF_Block', 
            'IRB_Block', 'SE_Block', 'PDL_Block', 'IDT_Block', 'GCGF_Module',
            'interpolate', 'up_block', 'out_block', 'init_conv', 
            'customized_module', 'customized_module_seq']
@@ -711,3 +711,17 @@ class CC3_Merge(nn.Module):
         
     def forward(self, x, y):
         return self.cc_block(torch.cat((x, y), dim=1))
+
+class FF_Block(nn.Module):
+    def __init__(self, n_classes):
+        super().__init__()
+        self.final_fuse = nn.Conv2d(4*n_classes, n_classes, kernel_size=1, padding=0, groups=n_classes, bias=True)
+        self.final_fuse.weight.data = init_conv(n_classes, 4, 1, mode='b')
+        
+    def forward(self, *feats):
+        feats_pyramid = []
+        b, c, h, w = feats[0].size()
+        for feats in tuple(feats):
+            feats_pyramid.append(interpolate(feats, size=(h, w), mode='nearest'))
+        out = torch.cat(tuple(feats_pyramid), dim=-2).reshape(b, 4*c, h, w)
+        return self.final_fuse(out)

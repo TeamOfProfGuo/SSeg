@@ -19,11 +19,12 @@ class Decoder(nn.Module):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, decoder_feat, n_classes, aux=False, conv_module='rbb', level_fuse='add', feats='f', rf_conv=(True, False), lf_bb='none', lf_args={}):
+    def __init__(self, decoder_feat, n_classes, aux=False, final_fuse=False, conv_module='rbb', level_fuse='add', feats='f', rf_conv=(True, False), lf_bb='none', lf_args={}):
         super().__init__()
 
         self.aux = aux
         self.feats = feats
+        self.final_fuse = final_fuse and aux
         # level_fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add,'max': Max_Level_Fuse, 'gau': GAU_Block}
 
         # Refine Blocks
@@ -43,6 +44,9 @@ class Base_Decoder(nn.Module):
                 self.add_module('aux%d' % i, 
                     nn.Conv2d(decoder_feat['level'][i], n_classes, kernel_size=1, stride=1, padding=0, bias=True),
                 )
+        
+        if final_fuse:
+            self.ff = FF_Block(n_classes)
 
         self.out_conv = out_block(min(decoder_feat['level']), decoder_feat['final'], n_classes, conv_module)
 
@@ -63,7 +67,10 @@ class Base_Decoder(nn.Module):
             feats = self.refine1(feats, x2)
             feats, aux2 = self.up2(feats)
             feats = self.refine2(feats, x1)
-            return [self.out_conv(feats), self.aux2(aux2), self.aux1(aux1), self.aux0(aux0)]
+            out_feats = [self.out_conv(feats), self.aux2(aux2), self.aux1(aux1), self.aux0(aux0)]
+            if self.final_fuse:
+                out_feats[0] = self.ff(*out_feats)
+            return out_feats
         else:
             feats = self.refine0(self.up0(x4), x3)
             feats = self.refine1(self.up1(feats), x2)
