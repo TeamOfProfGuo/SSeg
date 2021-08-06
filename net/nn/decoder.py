@@ -19,19 +19,30 @@ class Decoder(nn.Module):
         return self.decoder(feats)
 
 class Base_Decoder(nn.Module):
-    def __init__(self, decoder_feat, n_classes, conv_module='rbb', level_fuse='add', feats='f', rf_conv=(True, False), lf_bb='none', lf_args={}):
+    def __init__(self, decoder_feat, n_classes, aux=False, conv_module='rbb', level_fuse='add', feats='f', rf_conv=(True, False), lf_bb='none', lf_args={}):
         super().__init__()
 
+        self.aux = aux
         self.feats = feats
         # level_fuse_dict = {'add': Simple_Level_Fuse, 'na': Norm_Add,'max': Max_Level_Fuse, 'gau': GAU_Block}
 
         # Refine Blocks
         for i in range(len(decoder_feat['level'])):
-            self.add_module('refine%d' % i, Base_Level_Fuse(decoder_feat['level'][i], level_fuse, rf_conv, lf_bb, lf_args))
+            self.add_module('refine%d' % i,
+                Base_Level_Fuse(decoder_feat['level'][i], level_fuse, rf_conv, lf_bb, lf_args)
+            )
 
         # Upsample Blocks
         for i in range(len(decoder_feat['level'])):
-            self.add_module('up%d' % i, up_block(decoder_feat['level'][i], conv_module))
+            self.add_module('up%d' % i, 
+                up_block(decoder_feat['level'][i], conv_module, aux=aux)
+            )
+        
+        if aux:
+            for i in range(len(decoder_feat['level'])):
+                self.add_module('aux%d' % i, 
+                    nn.Conv2d(decoder_feat['level'][i], n_classes, kernel_size=1, stride=1, padding=0, bias=True),
+                )
 
         self.out_conv = out_block(min(decoder_feat['level']), decoder_feat['final'], n_classes, conv_module)
 
@@ -45,10 +56,19 @@ class Base_Decoder(nn.Module):
         else:
             raise ValueError('Invalid out feats: %s.' % self.feats)
 
-        feats = self.refine0(self.up0(x4), x3)
-        feats = self.refine1(self.up1(feats), x2)
-        feats = self.refine2(self.up2(feats), x1)
-        return self.out_conv(feats)
+        if self.aux:
+            feats, aux0 = self.up0(x4)
+            feats = self.refine0(feats, x3)
+            feats, aux1 = self.up1(feats)
+            feats = self.refine1(feats, x2)
+            feats, aux2 = self.up2(feats)
+            feats = self.refine2(feats, x1)
+            return [self.out_conv(feats), self.aux2(aux2), self.aux1(aux1), self.aux0(aux0)]
+        else:
+            feats = self.refine0(self.up0(x4), x3)
+            feats = self.refine1(self.up1(feats), x2)
+            feats = self.refine2(self.up2(feats), x1)
+            return [self.out_conv(feats)]
 
 class CC_Decoder(nn.Module):
     def __init__(self, decoder_feat, n_classes, feats='f', rd_conv='conv', k=1, init_args={}):

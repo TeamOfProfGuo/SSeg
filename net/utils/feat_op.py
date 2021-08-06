@@ -313,7 +313,7 @@ def interpolate(x, size, mode = 'bilinear'):
     else:
         return F.interpolate(x, size=size, mode=mode)
 
-def up_block(feats, module='cbr'):
+def up_block(feats, module='cbr', aux=False):
     if module == 'cbr':
         return nn.Sequential(
             CBR(2*feats, feats),
@@ -364,10 +364,30 @@ def up_block(feats, module='cbr'):
         )
     elif module.find('ctmd') != -1:
         return nn.Sequential(*[customized_module(info, feats) for info in module.split()[1:]])
+    elif module == 'irb':
+        return IRB_Up_Block(feats, aux=aux)
     elif module == 'nbc':
         return NBC_Up(2*feats)
     else:
         raise NotImplementedError('Invalid decoder module: %s.' % module)
+
+class IRB_Up_Block(nn.Module):
+    def __init__(self, in_feats, aux=False):
+        super().__init__()
+        self.aux = aux
+        self.conv_unit = nn.Sequential(
+            IRB_Block(2*in_feats, 2*in_feats),
+            IRB_Block(2*in_feats, 2*in_feats),
+            IRB_Block(2*in_feats, in_feats)
+        )
+        self.up_unit = LearnedUpUnit(in_feats)
+
+    def forward(self, x):
+        feats = self.conv_unit(x)
+        if self.aux:
+            return self.up_unit(feats), feats
+        else:
+            return self.up_unit(feats)
 
 def out_block(in_feats, mid_feats, n_classes, module='cbr'):
     if module == 'cbr':
@@ -409,7 +429,7 @@ def out_block(in_feats, mid_feats, n_classes, module='cbr'):
         #     LU_Unit('lurp', n_classes),
         #     LU_Unit('lurp', n_classes)
         # )
-    elif (module in ('rbb7o', 'rb7o', 'r7o')) or (module.find('ctmd') != -1):
+    elif (module in ('rbb7o', 'rb7o', 'r7o', 'irb')) or (module.find('ctmd') != -1):
         return nn.Sequential(
             nn.Conv2d(in_feats, n_classes, kernel_size=1, stride=1, padding=0, bias=True),
             LearnedUpUnit(n_classes),

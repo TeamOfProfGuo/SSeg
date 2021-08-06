@@ -92,7 +92,7 @@ class Trainer():
 
         # criterions
         self.criterion = SegmentationLoss(se_loss=args.se_loss,
-                                          aux=args.aux,
+                                          aux=self.config.decoder_args.aux,
                                           nclass=self.nclass,
                                           se_weight=args.se_weight,
                                           aux_weight=args.aux_weight)
@@ -153,12 +153,12 @@ class Trainer():
                 image, dep, target = image.to(self.device), dep.to(self.device), target.to(self.device)
                 outputs = self.model(image, dep)
 
-            loss = self.criterion(outputs, target)
+            loss = self.criterion(*outputs, target)
             loss.backward()
             self.optimizer.step()
 
-            correct, labeled = utils.batch_pix_accuracy(outputs.data, target)
-            inter, union = utils.batch_intersection_union(outputs.data, target, self.nclass)
+            correct, labeled = utils.batch_pix_accuracy(outputs[0].data, target)
+            inter, union = utils.batch_intersection_union(outputs[0].data, target, self.nclass)
             total_correct += correct
             total_label += labeled
             total_inter += inter
@@ -225,9 +225,9 @@ class Trainer():
         def eval_batch(model, image, dep, target):
             # model, image, target already moved to gpus
             pred = model(image, dep)
-            loss = self.criterion(pred, target)
-            correct, labeled = utils.batch_pix_accuracy(pred.data, target)
-            inter, union = utils.batch_intersection_union(pred.data, target, self.nclass)
+            loss = self.criterion(*pred, target)
+            correct, labeled = utils.batch_pix_accuracy(pred[0].data, target)
+            inter, union = utils.batch_intersection_union(pred[0].data, target, self.nclass)
             return correct, labeled, inter, union, loss
 
         self.model.eval()

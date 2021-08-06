@@ -56,6 +56,8 @@ class Prl_BaseNet(nn.Module):
         config.decoder_feat = decoder_feat
         config.decoder_args = decoder_args
 
+        self.aux = decoder_args.aux
+
         self.config = config
 
     def forward(self, x, d):
@@ -92,10 +94,9 @@ class Prl_BaseNet(nn.Module):
         feats = self.cp(feats)
 
         # Decoder
-        out = self.decoder(feats)
-
-        out = F.interpolate(out, (h, w), mode='bilinear', align_corners=True)
-        return out
+        out_feats = self.decoder(feats)
+        # out_feats[0] = F.interpolate(out_feats[0], (h, w), mode='bilinear', align_corners=True)
+        return tuple(out_feats)
 
 def get_prl_basenet(dataset='nyud', backbone='resnet18', pretrained=True, root='./encoding/models/pretrain/', config={}):
     from ...datasets import datasets
