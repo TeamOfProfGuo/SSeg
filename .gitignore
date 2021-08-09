@@ -3,7 +3,7 @@
 *.pyc
 *.pth.tar
 *.pth
-*.nyu.cluster
+*.cluster
 *.log
 *.out
 *.txt

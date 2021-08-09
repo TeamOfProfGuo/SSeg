@@ -25,7 +25,7 @@ def get_config(exp_id):
             fuse_args2=GCGF_ARGS[fuse2_idx],
             decoder_args=DECODER_ARGS[decoder_idx]
         )
-    elif date in ('0806', 'TBA'):
+    elif date in ('0806', '0807', '0808'):
         decoder_dict = {'a': 7, 'b': 8, 'c': 9}
         decoder_idx = decoder_dict[idx[0]]
         fuse1_idx = int(idx[1])
@@ -38,6 +38,19 @@ def get_config(exp_id):
             decoder_args=DECODER_ARGS[decoder_idx],
             aux = use_aux
         )
+    elif date in ('0806ff'):
+        decoder_dict = {'a': 7, 'b': 8, 'c': 9}
+        decoder_idx = decoder_dict[idx[0]]
+        fuse1_idx = int(idx[1])
+        fuse2_idx = int(idx[2])
+        return get_gcgf_diff(
+            template_dict=GCGF_TEMPLATE,
+            fuse_args1=GCGF_ARGS[fuse1_idx],
+            fuse_args2=GCGF_ARGS[fuse2_idx],
+            decoder_args=DECODER_ARGS[decoder_idx],
+            aux = True,
+            final_fuse=True
+        )
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
 
@@ -48,10 +61,11 @@ def get_gcgf(template_dict, fuse_args, decoder_args):
     config['decoder_args']['lf_args'] = fuse_args
     return Dict(config)
 
-def get_gcgf_diff(template_dict, fuse_args1, fuse_args2, decoder_args, aux=False):
+def get_gcgf_diff(template_dict, fuse_args1, fuse_args2, decoder_args, aux=False, final_fuse=False):
     config = deepcopy(template_dict)
     config['fuse_args']['gcgf_args'] = fuse_args1
     config['decoder_args']['aux'] = aux
+    config['decoder_args']['final_fuse'] = final_fuse
     config['decoder_args'].update(decoder_args)
     config['decoder_args']['lf_args'] = fuse_args2
     return Dict(config)
