@@ -84,7 +84,7 @@ class Merge_Module(nn.Module):
         return self.gcgf(m, x, y), x, y
 
 class General_Merge_Block(nn.Module):
-    def __init__(self, in_feats, pre_bn=False, merge='gcgf', init=(False, True), civ=1):
+    def __init__(self, in_feats, pre_bn=False, merge='gcgf', init=(False, True), civ=-1):
         super().__init__()
         if pre_bn:
             self.pre_bn1 = nn.BatchNorm2d(in_feats)
