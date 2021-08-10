@@ -44,11 +44,11 @@ class Decoder(nn.Module):
             LearnedUpUnit(n_classes)
         )
 
-    def forward(self, feats):
-        f1 = feats['%s1' % self.feats]
-        f2 = feats['%s2' % self.feats]
-        f3 = feats['%s3' % self.feats]
-        f4 = feats['%s4' % self.feats]
+    def forward(self, in_feats):
+        f1 = in_feats['%s1' % self.feats]
+        f2 = in_feats['%s2' % self.feats]
+        f3 = in_feats['%s3' % self.feats]
+        f4 = in_feats['%s4' % self.feats]
 
         if self.aux:
             feats, aux0 = self.up0(f4)
@@ -77,7 +77,8 @@ class Level_Fuse_Module(nn.Module):
     
     def forward(self, x, y):
         y = self.rfb0(y)    # Refine feats from backbone
-        return self.rfb1(self.fuse(x, y))
+        out, _, _ = self.fuse(x, y)
+        return self.rfb1(out)
 
 class IRB_Up_Block(nn.Module):
     def __init__(self, in_feats, aux=False):

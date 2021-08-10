@@ -270,6 +270,11 @@ if __name__ == "__main__":
     args.training.cuda = (args.training.use_cuda and torch.cuda.is_available())
     args.training.resume = None if args.training.resume == 'None' else args.training.resume
     torch.manual_seed(args.training.seed)
+    if len(sys.argv) > 3:
+        print('debugging mode...')
+        args.training.workers = 1
+        args.training.batch_size = 1
+        args.training.test_batch_size = 1
 
     trainer = Trainer(args)
     print('Starting Epoch:', trainer.config.training.start_epoch)
