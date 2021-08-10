@@ -4,7 +4,7 @@ from copy import deepcopy
 
 def get_config(exp_id):
     date, idx = tuple(exp_id.split('_'))
-    if date in ('0809', 'TBD'):
+    if date in ('0809', 'test'):
         encoder_dict = {'2': '2b', '3': '3b'}
         encoder_branches = encoder_dict[idx[0]]
         decoder_feats = idx[1]
@@ -21,6 +21,51 @@ def get_config(exp_id):
             lf_args=DECODER_ARGS[decoder_idx],
             aux = use_aux
         )
+    elif date.find('0810') != -1:
+        if 'a' in date:
+            config = build_config(
+                template_dict=TEMPLATE,
+                encoder='2b',
+                fuse_args1=FUSE_ARGS[int(idx[1])],
+                fuse_args2=FUSE_ARGS[int(idx[2])],
+                decoder_feats='x',
+                lf_args=DECODER_ARGS[idx[0]],
+                aux = (idx[3] == 't')
+            )
+            config.training.lr_setting = 'ori'
+        elif 'b' in date:
+            config = build_config(
+                template_dict=TEMPLATE,
+                encoder='2b',
+                fuse_args1=FUSE_ARGS[int(idx[1])],
+                fuse_args2=FUSE_ARGS[int(idx[2])],
+                decoder_feats='x',
+                lf_args=DECODER_ARGS[idx[0]],
+                aux = (idx[3] == 't')
+            )
+            config.training.lr_setting = 'edt'
+        elif 'c' in date:
+            config = build_config(
+                template_dict=TEMPLATE,
+                encoder='2b',
+                fuse_args1=FUSE_ARGS[int(idx[1])],
+                fuse_args2=FUSE_ARGS[int(idx[2])],
+                decoder_feats='x',
+                lf_args=DECODER_ARGS[idx[0]],
+                aux = (idx[3] == 't')
+            )
+            config.general.cp = 'psp'
+            if date[-1] == '1':
+                config.cp_args = {'size': (1, 2, 3, 6)}
+            elif date[-1] == '2':
+                config.cp_args = {'size': (1, 2, 4, 8)}
+            elif date[-1] == '3':
+                config.cp_args = {'size': (1, 3, 5, 7)}
+            elif date[-1] == '4':
+                config.cp_args = {'size': (1, 3, 5, 8)}
+            else:
+                raise ValueError('Invalid cp_args: %s.' % date)
+        return config
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
 
