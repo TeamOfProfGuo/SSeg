@@ -82,7 +82,7 @@ class Trainer():
                                             {'params': model.encoder.encoder.dep_base.parameters(), 'lr': args.lr},
                                             {'params': other_params, 'lr': args.lr * 10}],
                                             lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-        else:
+        elif args.lr_setting == 'same-2b':
             # optimizer using different LR
             base_ids = list(map(id, model.encoder.encoder.rgb_base.parameters())) + list(map(id, model.encoder.encoder.dep_base.parameters()))
             base_params = filter(lambda p: id(p) in base_ids, model.parameters())
@@ -90,6 +90,19 @@ class Trainer():
             self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
                                             {'params': other_params, 'lr': args.lr * 10}],
                                             lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        elif args.lr_setting == 'same-3b':
+            # optimizer using different LR
+            rgb_ids = list(map(id, model.encoder.encoder.rgb_base.parameters()))
+            dep_ids = list(map(id, model.encoder.encoder.dep_base.parameters()))
+            mer_ids = list(map(id, model.encoder.encoder.mer_base.parameters()))
+            base_ids = rgb_ids + dep_ids + mer_ids
+            base_params = filter(lambda p: id(p) in base_ids, model.parameters())
+            other_params = filter(lambda p: id(p) not in base_ids, model.parameters())
+            self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
+                                            {'params': other_params, 'lr': args.lr * 10}],
+                                            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        else:
+            raise ValueError('Invalid lr_setting: %s.' % args.lr_setting)
 
         # criterions
         self.criterion = SegmentationLoss(se_loss=args.se_loss,

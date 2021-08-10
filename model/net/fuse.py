@@ -64,6 +64,56 @@ class General_Fuse_Block(nn.Module):
             else:
                 self.merge.weight.data.fill_(civ)
 
+class Merge_Module(nn.Module):
+    def __init__(self, in_feats, fuse_setting={}, att_module='idt', att_setting={}):
+        super().__init__()
+        module_dict = {
+            'idt': IDT_Block,
+            'se': SE_Block,
+            'pdl': PDL_Block
+        }
+        self.att_module = att_module
+        self.pre1 = module_dict[att_module](in_feats, **att_setting)
+        self.pre2 = module_dict[att_module](in_feats, **att_setting)
+        self.gcgf = General_Merge_Block(in_feats, **fuse_setting)
+    
+    def forward(self, m, x, y):
+        if self.att_module != 'idt':
+            x = self.pre1(x)
+            y = self.pre2(y)
+        return self.gcgf(m, x, y), x, y
+
+class General_Merge_Block(nn.Module):
+    def __init__(self, in_feats, pre_bn=False, merge='gcgf', init=(False, True), civ=1):
+        super().__init__()
+        if pre_bn:
+            self.pre_bn1 = nn.BatchNorm2d(in_feats)
+            self.pre_bn2 = nn.BatchNorm2d(in_feats)
+        self.pre_bn = pre_bn
+        self.feats = in_feats
+        self.merge = nn.Conv2d(3*in_feats, in_feats, kernel_size=1, padding=0, groups=in_feats, bias=True)
+        self._init_weights(init, civ)
+        
+    def forward(self, m, x, y):
+        b, c, h, w = x.size()
+        if self.pre_bn:
+            x = self.pre_bn1(x)
+            y = self.pre_bn2(y)
+        feats = torch.cat((m, x, y), dim=-2).reshape(b, 3*c, h, w)
+        return self.merge(feats)
+            
+    def _init_weights(self, init, civ):
+        if init[0] and self.pre_bn:
+            self.pre_bn1.weight.data.fill_(1)
+            self.pre_bn2.weight.data.fill_(1)
+            self.pre_bn1.bias.data.zero_()
+            self.pre_bn2.bias.data.zero_()
+        if init[1] and isinstance(self.merge, nn.Conv2d):
+            if civ == -1:
+                self.merge.weight.data = init_conv(self.feats, 3, 1, 'b')
+            else:
+                self.merge.weight.data.fill_(civ)
+
 # ARM Blocks
 
 class SE_Block(nn.Module):

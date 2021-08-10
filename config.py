@@ -43,7 +43,7 @@ def get_config(exp_id):
                 lf_args=DECODER_ARGS[idx[0]],
                 aux = (idx[3] == 't')
             )
-            config.training.lr_setting = 'edt'
+            config.training.lr_setting = 'same-2b'
         elif 'c' in date:
             config = build_config(
                 template_dict=TEMPLATE,
@@ -65,6 +65,18 @@ def get_config(exp_id):
                 config.cp_args = {'size': (1, 3, 5, 8)}
             else:
                 raise ValueError('Invalid cp_args: %s.' % date)
+        elif 'd' in date:
+            config = build_config(
+                template_dict=TEMPLATE,
+                encoder='3b',
+                fuse_args1=FUSE_ARGS[int(idx[1])],
+                fuse_args2=FUSE_ARGS[int(idx[2])],
+                decoder_feats='z',
+                lf_args=DECODER_ARGS[idx[0]],
+                aux = (idx[3] == 't')
+            )
+            config.training.lr_setting = 'same-3b'
+            config.encoder_args.pass_rff = (False, False, True)
         return config
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
