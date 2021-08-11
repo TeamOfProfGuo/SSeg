@@ -8,7 +8,8 @@ def archive_log(dst_dir = './results/', log_dir = './'):
     for file in file_list:
         if file.endswith('.log'):
             exp = file.split('.')[0]
-            dst_path = os.path.join(dst_dir, exp)
+            grp = exp.split('_')[0]
+            dst_path = os.path.join(dst_dir, grp, exp)
             log_path = os.path.join(log_dir, exp + '.log')
             with open(log_path, 'r') as f:
                 res = f.read()[-300:].split('\n')

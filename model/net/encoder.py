@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from addict import Dict
 
-from .fuse import Fuse_Module, Merge_Module
+from .fuse import FUSE_MODULE_DICT
 from .util import get_resnet18
 
 class Encoder(nn.Module):
@@ -19,7 +19,7 @@ class Encoder(nn.Module):
         return self.encoder(l, d)
 
 class Res3b_Encoder(nn.Module):
-    def __init__(self, fuse_args, pass_rff=(False, False, True)):
+    def __init__(self, fuse_args, pass_rff=(False, False, True), fuse_module='merge'):
         super().__init__()
 
         self.pass_rff = pass_rff
@@ -49,7 +49,7 @@ class Res3b_Encoder(nn.Module):
         # Fuse Block
         fuse_feats = [64, 64, 128, 256, 512]
         for i in range(len(fuse_feats)):
-            self.add_module('fuse%d' % i, Merge_Module(fuse_feats[i], **fuse_args))
+            self.add_module('fuse%d' % i, FUSE_MODULE_DICT[fuse_module](fuse_feats[i], **fuse_args))
     
     def forward(self, l, d):
 
@@ -99,7 +99,7 @@ class Res3b_Encoder(nn.Module):
         return feats
 
 class Res2b_Encoder(nn.Module):
-    def __init__(self, fuse_args, pass_rff=(True, False)):
+    def __init__(self, fuse_args, pass_rff=(True, False), fuse_module='fuse'):
         super().__init__()
 
         self.pass_rff = pass_rff
@@ -123,7 +123,7 @@ class Res2b_Encoder(nn.Module):
         # Fuse Block
         fuse_feats = [64, 64, 128, 256, 512]
         for i in range(len(fuse_feats)):
-            self.add_module('fuse%d' % i, Fuse_Module(fuse_feats[i], **fuse_args))
+            self.add_module('fuse%d' % i, FUSE_MODULE_DICT[fuse_module](fuse_feats[i], **fuse_args))
     
     def forward(self, l, d):
 

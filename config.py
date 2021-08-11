@@ -9,8 +9,8 @@ def get_config(exp_id):
         encoder_branches = encoder_dict[idx[0]]
         decoder_feats = idx[1]
         decoder_idx = idx[2]
-        fuse1_idx = int(idx[3])
-        fuse2_idx = int(idx[4])
+        fuse1_idx = idx[3]
+        fuse2_idx = idx[4]
         use_aux = (idx[5] == 't')
         return build_config(
             template_dict=TEMPLATE,
@@ -26,8 +26,8 @@ def get_config(exp_id):
             config = build_config(
                 template_dict=TEMPLATE,
                 encoder='2b',
-                fuse_args1=FUSE_ARGS[int(idx[1])],
-                fuse_args2=FUSE_ARGS[int(idx[2])],
+                fuse_args1=FUSE_ARGS[idx[1]],
+                fuse_args2=FUSE_ARGS[idx[2]],
                 decoder_feats='x',
                 lf_args=DECODER_ARGS[idx[0]],
                 aux = (idx[3] == 't')
@@ -37,8 +37,8 @@ def get_config(exp_id):
             config = build_config(
                 template_dict=TEMPLATE,
                 encoder='2b',
-                fuse_args1=FUSE_ARGS[int(idx[1])],
-                fuse_args2=FUSE_ARGS[int(idx[2])],
+                fuse_args1=FUSE_ARGS[idx[1]],
+                fuse_args2=FUSE_ARGS[idx[2]],
                 decoder_feats='x',
                 lf_args=DECODER_ARGS[idx[0]],
                 aux = (idx[3] == 't')
@@ -48,8 +48,8 @@ def get_config(exp_id):
             config = build_config(
                 template_dict=TEMPLATE,
                 encoder='2b',
-                fuse_args1=FUSE_ARGS[int(idx[1])],
-                fuse_args2=FUSE_ARGS[int(idx[2])],
+                fuse_args1=FUSE_ARGS[idx[1]],
+                fuse_args2=FUSE_ARGS[idx[2]],
                 decoder_feats='x',
                 lf_args=DECODER_ARGS[idx[0]],
                 aux = (idx[3] == 't')
@@ -69,14 +69,39 @@ def get_config(exp_id):
             config = build_config(
                 template_dict=TEMPLATE,
                 encoder='3b',
-                fuse_args1=FUSE_ARGS[int(idx[1])],
-                fuse_args2=FUSE_ARGS[int(idx[2])],
+                fuse_args1=FUSE_ARGS[idx[1]],
+                fuse_args2=FUSE_ARGS[idx[2]],
                 decoder_feats='z',
                 lf_args=DECODER_ARGS[idx[0]],
                 aux = (idx[3] == 't')
             )
             config.training.lr_setting = 'same-3b'
             config.encoder_args.pass_rff = (False, False, True)
+        return config
+    elif date.find('0811') != -1:
+        if 'a' in date:
+            config = build_config(
+                template_dict=TEMPLATE,
+                encoder='2b',
+                fuse_args1=FUSE_ARGS[idx[1]],
+                fuse_args2=FUSE_ARGS[idx[2]],
+                decoder_feats='x',
+                lf_args=DECODER_ARGS[idx[0]],
+                aux = (idx[3] == 't')
+            )
+            aux_weight = {'1': 0.2, '2': 0.4, '3': 0.6, '4': 0.8}
+            config.training.aux_weight = aux_weight[idx[-1]]
+        elif 'b' in date:
+            config = build_config(
+                template_dict=TEMPLATE,
+                encoder='2b',
+                fuse_args1=FUSE_ARGS[idx[1]],
+                fuse_args2=FUSE_ARGS[idx[2]],
+                decoder_feats='x',
+                lf_args=DECODER_ARGS[idx[0]],
+                aux = (idx[3] == 't')
+            )
+            config.decoder_args.lf_args.fuse_module = 'ca6'
         return config
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
@@ -140,7 +165,8 @@ TEMPLATE = {
     },
     'encoder_args': {
         'fuse_args': {},
-        'pass_rff': (True, False)
+        'pass_rff': (True, False),
+        'fuse_module': 'fuse'
     },
     'cp_args': {
 
@@ -151,7 +177,8 @@ TEMPLATE = {
         'lf_args': {
             'conv_flag': None,
             'lf_bb': None,
-            'fuse_args': {}
+            'fuse_args': {},
+            'fuse_module': 'fuse'
         }
     }
 }
@@ -172,7 +199,7 @@ DECODER_ARGS = {
 }
 
 FUSE_ARGS = {
-    1: {
+    '1': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'add',
@@ -182,7 +209,7 @@ FUSE_ARGS = {
         'att_module': 'pdl',
         'att_setting': {}
     },
-    2: {
+    '2': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'la',
@@ -192,7 +219,7 @@ FUSE_ARGS = {
         'att_module': 'pdl',
         'att_setting': {}
     },
-    3: {
+    '3': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'gcgf',
@@ -202,7 +229,7 @@ FUSE_ARGS = {
         'att_module': 'pdl',
         'att_setting': {}
     },
-    4: {
+    '4': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'gcgf',
@@ -212,7 +239,7 @@ FUSE_ARGS = {
         'att_module': 'pdl',
         'att_setting': {}
     },
-    5: {
+    '5': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'add',
@@ -222,7 +249,7 @@ FUSE_ARGS = {
         'att_module': 'idt',
         'att_setting': {}
     },
-    6: {
+    '6': {
         'fuse_setting': {
             'pre_bn': True,
             'merge': 'add',
@@ -232,7 +259,7 @@ FUSE_ARGS = {
         'att_module': 'idt',
         'att_setting': {}
     },
-    7: {
+    '7': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'gcgf',
@@ -242,7 +269,7 @@ FUSE_ARGS = {
         'att_module': 'idt',
         'att_setting': {}
     },
-    8: {
+    '8': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'gcgf',
@@ -252,7 +279,7 @@ FUSE_ARGS = {
         'att_module': 'idt',
         'att_setting': {}
     },
-    0: {
+    '0': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'gcgf',
@@ -262,7 +289,7 @@ FUSE_ARGS = {
         'att_module': 'pdl',
         'att_setting': {}
     },
-    9: {
+    '9': {
         'fuse_setting': {
             'pre_bn': False,
             'merge': 'gcgf',
@@ -271,7 +298,19 @@ FUSE_ARGS = {
         },
         'att_module': 'idt',
         'att_setting': {}
-    }
+    },
+    'i': {
+        'act_fn': 'idt',
+        'pass_rff': False
+    },
+    't': {
+        'act_fn': 'tanh',
+        'pass_rff': False
+    },
+    's': {
+        'act_fn': 'sigmoid',
+        'pass_rff': False
+    },
 }
 
 if __name__ == '__main__':

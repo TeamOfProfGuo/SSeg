@@ -64,6 +64,33 @@ class General_Fuse_Block(nn.Module):
             else:
                 self.merge.weight.data.fill_(civ)
 
+class CA6_Module(nn.Module):
+    def __init__(self, in_feats, act_fn='idt', pass_rff=False):
+        super().__init__()
+        # 参考PAN x 为浅层网络，y为深层网络
+        act_dict = {
+            'idt': nn.Identity,
+            'tanh': nn.Tanh,
+            'sigmoid': nn.Sigmoid
+        }
+        self.pass_rff = pass_rff
+        self.x_conv = nn.Sequential(
+            nn.Conv2d(in_feats, in_feats, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(in_feats)
+        )
+        self.y_conv = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_feats, in_feats, kernel_size=1, padding=0, bias=False),
+            nn.BatchNorm2d(in_feats),
+            nn.ReLU(inplace=True),
+            act_dict[act_fn]()
+        )
+
+    def forward(self, y, x):
+        z = self.x_conv(x)      # [B, c, h, w]
+        w = self.y_conv(y)      # [B, c, 1, 1]
+        return (w * z + y), None, (z if self.pass_rff else x)
+
 class Merge_Module(nn.Module):
     def __init__(self, in_feats, fuse_setting={}, att_module='idt', att_setting={}):
         super().__init__()
@@ -191,3 +218,10 @@ class CC3_Merge(nn.Module):
         
     def forward(self, x, y):
         return self.cc_block(torch.cat((x, y), dim=1))
+
+# Constant that stores available fusion modules
+FUSE_MODULE_DICT = {
+    'merge': Merge_Module,
+    'fuse': Fuse_Module,
+    'ca6': CA6_Module
+}

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from .util import *
-from .fuse import Fuse_Module
+from .fuse import FUSE_MODULE_DICT
 
 class Decoder(nn.Module):
     def __init__(self, n_classes, feats='x', aux=False, final_fuse=False, lf_args={}):
@@ -68,16 +68,16 @@ class Decoder(nn.Module):
             return [self.out_conv(feats)]
 
 class Level_Fuse_Module(nn.Module):
-    def __init__(self, in_feats, conv_flag=(True, False), lf_bb='rbb[2->2]', fuse_args={}):
+    def __init__(self, in_feats, conv_flag=(True, False), lf_bb='rbb[2->2]', fuse_args={}, fuse_module='fuse'):
         super().__init__()
         self.conv_flag = conv_flag
-        self.fuse = Fuse_Module(in_feats, **fuse_args)
+        self.fuse = FUSE_MODULE_DICT[fuse_module](in_feats, **fuse_args)
         self.rfb0 = customized_module(lf_bb, in_feats) if conv_flag[0] else nn.Identity()
         self.rfb1 = customized_module(lf_bb, in_feats) if conv_flag[1] else nn.Identity()
     
-    def forward(self, x, y):
-        y = self.rfb0(y)    # Refine feats from backbone
-        out, _, _ = self.fuse(x, y)
+    def forward(self, y, x):
+        x = self.rfb0(x)    # Refine feats from backbone
+        out, _, _ = self.fuse(y, x)
         return self.rfb1(out)
 
 class IRB_Up_Block(nn.Module):
