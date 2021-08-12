@@ -103,6 +103,32 @@ def get_config(exp_id):
             )
             config.decoder_args.lf_args.fuse_module = 'ca6'
         return config
+    elif date.find('0812') != -1:
+        if 'a' in date:
+            config = build_config(
+                template_dict=TEMPLATE,
+                encoder='2b',
+                fuse_args1=FUSE_ARGS[idx[1]],
+                fuse_args2=FUSE_ARGS[idx[2]],
+                decoder_feats='x',
+                lf_args=DECODER_ARGS[idx[0]],
+                aux = (idx[3] == 't')
+            )
+            config.training.aux_weight = 0.5
+        elif 'b' in date:
+            config = build_config(
+                template_dict=TEMPLATE,
+                encoder='2b',
+                fuse_args1=FUSE_ARGS[idx[1]],
+                fuse_args2=FUSE_ARGS[idx[2]],
+                decoder_feats='x',
+                lf_args=DECODER_ARGS[idx[0]],
+                aux = (idx[3] == 't')
+            )
+            aux_weight = {'1': 0.3, '2': 0.5, '3': 0.7}
+            config.training.aux_weight = aux_weight[idx[-1]]
+            config.decoder_args.lf_args.fuse_module = 'ca6'
+        return config
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
 
