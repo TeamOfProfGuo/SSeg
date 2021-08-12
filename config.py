@@ -23,37 +23,13 @@ def get_config(exp_id):
         )
     elif date.find('0810') != -1:
         if 'a' in date:
-            config = build_config(
-                template_dict=TEMPLATE,
-                encoder='2b',
-                fuse_args1=FUSE_ARGS[idx[1]],
-                fuse_args2=FUSE_ARGS[idx[2]],
-                decoder_feats='x',
-                lf_args=DECODER_ARGS[idx[0]],
-                aux = (idx[3] == 't')
-            )
+            config = get_2bxt_config(idx)
             config.training.lr_setting = 'ori'
         elif 'b' in date:
-            config = build_config(
-                template_dict=TEMPLATE,
-                encoder='2b',
-                fuse_args1=FUSE_ARGS[idx[1]],
-                fuse_args2=FUSE_ARGS[idx[2]],
-                decoder_feats='x',
-                lf_args=DECODER_ARGS[idx[0]],
-                aux = (idx[3] == 't')
-            )
+            config = get_2bxt_config(idx)
             config.training.lr_setting = 'same-2b'
         elif 'c' in date:
-            config = build_config(
-                template_dict=TEMPLATE,
-                encoder='2b',
-                fuse_args1=FUSE_ARGS[idx[1]],
-                fuse_args2=FUSE_ARGS[idx[2]],
-                decoder_feats='x',
-                lf_args=DECODER_ARGS[idx[0]],
-                aux = (idx[3] == 't')
-            )
+            config = get_2bxt_config(idx)
             config.general.cp = 'psp'
             if date[-1] == '1':
                 config.cp_args = {'size': (1, 2, 3, 6)}
@@ -80,51 +56,19 @@ def get_config(exp_id):
         return config
     elif date.find('0811') != -1:
         if 'a' in date:
-            config = build_config(
-                template_dict=TEMPLATE,
-                encoder='2b',
-                fuse_args1=FUSE_ARGS[idx[1]],
-                fuse_args2=FUSE_ARGS[idx[2]],
-                decoder_feats='x',
-                lf_args=DECODER_ARGS[idx[0]],
-                aux = (idx[3] == 't')
-            )
+            config = get_2bxt_config(idx)
             aux_weight = {'1': 0.2, '2': 0.4, '3': 0.6, '4': 0.8}
             config.training.aux_weight = aux_weight[idx[-1]]
         elif 'b' in date:
-            config = build_config(
-                template_dict=TEMPLATE,
-                encoder='2b',
-                fuse_args1=FUSE_ARGS[idx[1]],
-                fuse_args2=FUSE_ARGS[idx[2]],
-                decoder_feats='x',
-                lf_args=DECODER_ARGS[idx[0]],
-                aux = (idx[3] == 't')
-            )
+            config = get_2bxt_config(idx)
             config.decoder_args.lf_args.fuse_module = 'ca6'
         return config
     elif date.find('0812') != -1:
         if 'a' in date:
-            config = build_config(
-                template_dict=TEMPLATE,
-                encoder='2b',
-                fuse_args1=FUSE_ARGS[idx[1]],
-                fuse_args2=FUSE_ARGS[idx[2]],
-                decoder_feats='x',
-                lf_args=DECODER_ARGS[idx[0]],
-                aux = (idx[3] == 't')
-            )
+            config = get_2bxt_config(idx)
             config.training.aux_weight = 0.5
         elif 'b' in date:
-            config = build_config(
-                template_dict=TEMPLATE,
-                encoder='2b',
-                fuse_args1=FUSE_ARGS[idx[1]],
-                fuse_args2=FUSE_ARGS[idx[2]],
-                decoder_feats='x',
-                lf_args=DECODER_ARGS[idx[0]],
-                aux = (idx[3] == 't')
-            )
+            config = get_2bxt_config(idx)
             aux_weight = {'1': 0.3, '2': 0.5, '3': 0.7}
             config.training.aux_weight = aux_weight[idx[-1]]
             config.decoder_args.lf_args.fuse_module = 'ca6'
@@ -143,6 +87,17 @@ def build_config(template_dict, encoder, fuse_args1, fuse_args2,
     config['decoder_args']['lf_args'].update(lf_args)
     config['decoder_args']['lf_args']['fuse_args'] = fuse_args2
     return Dict(config)
+
+def get_2bxt_config(idx):
+    return build_config(
+        template_dict=TEMPLATE,
+        encoder='2b',
+        fuse_args1=FUSE_ARGS[idx[1]],
+        fuse_args2=FUSE_ARGS[idx[2]],
+        decoder_feats='x',
+        lf_args=DECODER_ARGS[idx[0]],
+        aux = (idx[3] == 't')
+    )
 
 def test_config():
     config = get_config(sys.argv[1])
