@@ -91,6 +91,116 @@ class CA6_Module(nn.Module):
         w = self.y_conv(y)      # [B, c, 1, 1]
         return (w * z + y), None, (z if self.pass_rff else x)
 
+class PA0_Module(nn.Module):
+    def __init__(self, ch, r=4, act_fn='sigmoid'):
+        super().__init__()
+
+        int_ch = max(ch//r, 32)
+        self.act_fn = act_fn
+        if act_fn == 'sigmoid':
+            self.conv, self.fuse = 'conv', 'cat'
+        elif act_fn == 'tanh':
+            self.conv, self.fuse = 'conv', 'add'
+
+        self.W_x = nn.Sequential(
+            nn.Conv2d(ch, int_ch, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.BatchNorm2d(int_ch)
+        )
+        self.W_y = nn.Sequential(
+            nn.Conv2d(ch, int_ch, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.BatchNorm2d(int_ch)
+        )
+        self.psi = nn.Sequential(
+            nn.Conv2d(int_ch, 1, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.BatchNorm2d(1)
+        )
+        self.relu = nn.ReLU(inplace=True)
+
+        if self.conv == 'conv':
+            self.x_conv = nn.Sequential(
+                nn.Conv2d(ch, ch, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(ch)
+            )
+        if self.fuse == 'cat':
+            self.out_conv = nn.Conv2d(ch * 2, ch, kernel_size=1, stride=1)
+
+    def forward(self, y, x):   # 对x(第二个param)进行attention处理 y深层网络 x浅层网络
+        x1 = self.W_x(x)           # [B, int_c, h, w]
+        y1 = self.W_y(y)           # [B, int_c, h, w]
+        psi = self.relu(x1 + y1)   # no bias
+        psi = self.psi(psi)        # [B, 1, h, w]
+
+        if self.act_fn == 'sigmoid':
+            psi = F.sigmoid(psi)
+        elif self.act_fn == 'rsigmoid':
+            psi = F.sigmoid(F.relu(psi, inplace=True))
+        elif self.act_fn == 'tanh':
+            psi = F.tanh(F.relu(psi, inplace=True))
+
+        if self.conv:
+            x = self.x_conv(x)
+        weighted_x = x * psi
+
+        if self.fuse == 'add':
+            return (weighted_x + y), None, weighted_x
+        elif self.fuse == 'cat':
+            return self.out_conv(torch.cat((weighted_x, y), dim=1)), None, weighted_x
+
+class CA2b_Module(nn.Module):
+    def __init__(self, in_ch, r=16, act_fn=None):
+        """ Attention as in SKNet (selective kernel) """
+        super().__init__()
+        self.act_fn = act_fn
+        self.pp_size = (1, 3)
+        d = max(int(in_ch/r), 32)
+        #d = 32 if shape[0] >= 30 else 16
+        pp_d = sum(e**2 for e in self.pp_size)
+        print('pp_size: {} dimension d {}'.format(self.pp_size, d))
+
+        # to calculate Z
+        self.fc = nn.Sequential(nn.Linear(in_ch*pp_d, d, bias=False),
+                                nn.BatchNorm1d(d),
+                                nn.ReLU(inplace=True))
+        # 各个分支
+        self.fc_x = nn.Linear(d, in_ch)
+        self.fc_y = nn.Linear(d, in_ch)
+        if act_fn == 'sigmoid':
+            self.act_x = nn.Sigmoid()
+            self.act_y = nn.Sigmoid()
+        elif act_fn == 'tanh':
+            self.act_x = nn.Sequential(nn.ReLU(inplace=True), nn.Tanh())
+            self.act_y = nn.Sequential(nn.ReLU(inplace=True), nn.Tanh())
+        elif act_fn == 'rsigmoid':
+            self.act_x = nn.Sequential(nn.ReLU(inplace=True), nn.Sigmoid())
+            self.act_y = nn.Sequential(nn.ReLU(inplace=True), nn.Sigmoid())
+        elif act_fn == 'softmax':
+            self.act = nn.Softmax(dim=1)
+
+    def forward(self, x, y):
+        d = y.clone()
+        U = x+y
+        batch_size, ch, _, _ = U.size()
+
+        ppool = []
+        for s in self.pp_size:
+            ppool.append(F.adaptive_avg_pool2d(U, s).view(batch_size, ch, -1))  # [B, c, s*s]
+        z = torch.cat(tuple(ppool), dim=-1)            # [B, c, 1+9+25]
+        z = z.view(batch_size, -1).contiguous()        # [B, c*35]
+        z = self.fc(z)                                 # [B, d]
+
+        z_x = self.fc_x(z)  # [B, c]
+        z_y = self.fc_y(z)  # [B, c]
+        if self.act_fn in ['sigmoid', 'tanh', 'rsigmoid']:
+            w_x = self.act_x(z_x)    # [B, c]
+            w_y = self.act_y(z_y)    # [B, c]
+        elif self.act_fn == 'softmax':
+            w_xy = torch.cat((z_x, z_y), dim=1)    # [B, 2c]
+            w_xy = w_xy.view(batch_size, 2, ch)    # [B, 2, c]
+            w_xy = self.act(w_xy)                  # [B, 2, c]
+            w_x, w_y = w_xy[:, 0].contiguous(), w_xy[:, 1].contiguous()      # [B, c]
+        out = x * w_x.view(batch_size, ch, 1, 1) + y * w_y.view(batch_size, ch, 1, 1)
+        return out, None, d
+
 class Merge_Module(nn.Module):
     def __init__(self, in_feats, fuse_setting={}, att_module='idt', att_setting={}):
         super().__init__()
@@ -223,5 +333,7 @@ class CC3_Merge(nn.Module):
 FUSE_MODULE_DICT = {
     'merge': Merge_Module,
     'fuse': Fuse_Module,
-    'ca6': CA6_Module
+    'ca2b': CA2b_Module,
+    'ca6': CA6_Module,
+    'pa0': PA0_Module
 }

@@ -83,6 +83,14 @@ def get_config(exp_id):
                     'key_channels': 64,
                     'value_channels': 64
                 }
+        elif 'd' in date:
+            config = get_2bxt_config(idx)
+            config.training.aux_weight = 0.5
+            config.decoder_args.lf_args.fuse_module = 'pa0'
+        elif 'e' in date:
+            config = get_2bxt_config(idx)
+            config.training.aux_weight = 0.5
+            config.encoder_args.fuse_module = 'ca2b'
         return config
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
@@ -192,6 +200,7 @@ DECODER_ARGS = {
 }
 
 FUSE_ARGS = {
+    # General Fusion Module
     '1': {
         'fuse_setting': {
             'pre_bn': False,
@@ -292,6 +301,7 @@ FUSE_ARGS = {
         'att_module': 'idt',
         'att_setting': {}
     },
+    # CA6 Module (mrf only)
     'i': {
         'act_fn': 'idt',
         'pass_rff': False
@@ -303,6 +313,20 @@ FUSE_ARGS = {
     's': {
         'act_fn': 'sigmoid',
         'pass_rff': False
+    },
+    # PA0 Module (mrf only)
+    'p': {
+        'act_fn': 'sigmoid'
+    },
+    'q': {
+        'act_fn': 'tanh'
+    },
+    # CA2b  (mmf only)
+    'x': {
+        'act_fn': 'sigmoid'
+    },
+    'y': {
+        'act_fn': 'softmax'
     },
 }
 
