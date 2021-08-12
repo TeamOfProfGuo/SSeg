@@ -72,12 +72,23 @@ def get_config(exp_id):
             aux_weight = {'1': 0.3, '2': 0.5, '3': 0.7}
             config.training.aux_weight = aux_weight[idx[-1]]
             config.decoder_args.lf_args.fuse_module = 'ca6'
+        elif 'c' in date:
+            config = get_2bxt_config(idx)
+            config.training.aux_weight = 0.5
+            if idx[-1] == 'o':
+                config.decoder_args.final_fuse = 'apnb'
+                config.decoder_args.final_args = {
+                    'in_channels': 64,
+                    'out_channels': 64,
+                    'key_channels': 64,
+                    'value_channels': 64
+                }
         return config
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
 
 def build_config(template_dict, encoder, fuse_args1, fuse_args2, 
-                 decoder_feats, lf_args, aux=False, final_fuse=False):
+                 decoder_feats, lf_args, aux=False, final_fuse='none'):
     config = deepcopy(template_dict)
     config['general']['encoder'] = encoder
     config['general']['feats'] = decoder_feats
@@ -154,13 +165,14 @@ TEMPLATE = {
     },
     'decoder_args': {
         'aux': False,
-        'final_fuse': False,
+        'final_fuse': 'none',
         'lf_args': {
             'conv_flag': None,
             'lf_bb': None,
             'fuse_args': {},
             'fuse_module': 'fuse'
-        }
+        },
+        'final_args': {}
     }
 }
 

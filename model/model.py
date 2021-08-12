@@ -27,7 +27,8 @@ class Base_Net(nn.Module):
             feats=config.general.feats,
             aux=config.decoder_args.aux,
             final_fuse=config.decoder_args.final_fuse,
-            lf_args=config.decoder_args.lf_args
+            lf_args=config.decoder_args.lf_args,
+            final_args=config.decoder_args.final_args
         )
 
     def forward(self, l, d):
