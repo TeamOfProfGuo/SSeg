@@ -38,7 +38,8 @@ class Decoder(nn.Module):
         # Final fusion
         final_dict = {
             'none': nn.Identity,
-            'apnb': APNB
+            'apnb': APNB,
+            'sam': SimAM_Block
         }
         self.out_conv = nn.Sequential(
             final_dict[final_fuse](**final_args),

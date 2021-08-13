@@ -92,6 +92,43 @@ def get_config(exp_id):
             config.training.aux_weight = 0.5
             config.encoder_args.fuse_module = 'ca2b'
         return config
+    elif date.find('0813') != -1:
+        if 'a' in date:
+            # 0813a_cy4t<i> (aux_weight = i / 10)
+            config = get_2bxt_config(idx)
+            config.training.aux_weight = int(idx[-1]) / 10
+            config.encoder_args.fuse_module = 'ca2b'
+        elif 'b' in date:
+            # 0813b_cy<i>t (level fuse diff)
+            config = get_2bxt_config(idx)
+            config.training.aux_weight = 0.5
+            config.encoder_args.fuse_module = 'ca2b'
+            if idx[-2] in ('i', 't', 's'):
+                config.decoder_args.lf_args.fuse_module = 'ca6'
+            elif idx[-2] in ('p', 'q'):
+                config.decoder_args.lf_args.fuse_module = 'pa0'
+        elif 'c' in date:
+            # 0813c_cy4t<i> (psp diff)
+            config = get_2bxt_config(idx)
+            config.training.aux_weight = 0.5
+            config.encoder_args.fuse_module = 'ca2b'
+            config.general.cp = 'psp'
+            if idx[-1] == 'a':
+                config.cp_args = {'size': (1, 2, 3, 6)}
+            elif idx[-1] == 'b':
+                config.cp_args = {'size': (1, 2, 4, 8)}
+            elif idx[-1] == 'c':
+                config.cp_args = {'size': (1, 3, 5, 7)}
+            elif idx[-1] == 'd':
+                config.cp_args = {'size': (1, 3, 5, 8)}
+        elif 'd' in date:
+            # 0813d_cy<i>t (level fuse diff + SimAM)
+            config = get_2bxt_config(idx)
+            config.training.aux_weight = 0.5
+            config.encoder_args.fuse_module = 'ca2b'
+            config.decoder_args.final_fuse = 'sam'
+            config.decoder_args.final_args = {'in_feats': 64}
+        return config
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
 
