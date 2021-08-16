@@ -129,6 +129,28 @@ def get_config(exp_id):
             config.decoder_args.final_fuse = 'sam'
             config.decoder_args.final_args = {'in_feats': 64}
         return config
+    elif date.find('0814') != -1:
+        # 0814_cy4t<i><j> (aux_weight = i/10, j-th exp)
+        config = get_2bxt_config(idx)
+        config.training.aux_weight = int(idx[-2]) / 10
+        config.encoder_args.fuse_module = 'ca2b'
+        return config
+    elif date.find('0815') != -1:
+        # 0815_cy<i>t<j> (i-th level fuse, j-th exp)
+        config = get_2bxt_config(idx)
+        config.training.aux_weight = 0.5
+        config.encoder_args.fuse_module = 'ca2b'
+        return config
+    elif date.find('0816') != -1:
+        # 0816_c<x/y><i>t<j> (i-th level fuse, j-th exp)
+        config = get_2bxt_config(idx)
+        config.training.aux_weight = 0.5
+        config.encoder_args.fuse_module = 'ca2b'
+        if idx[-3] in ('i', 't', 's'):
+            config.decoder_args.lf_args.fuse_module = 'ca6'
+        elif idx[-3] in ('p', 'q'):
+            config.decoder_args.lf_args.fuse_module = 'pa0'
+        return config
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
 
