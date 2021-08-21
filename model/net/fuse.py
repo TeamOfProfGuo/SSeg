@@ -28,7 +28,8 @@ class General_Fuse_Block(nn.Module):
     def __init__(self, in_feats, pre_bn=False, merge='gcgf', init=(False, True), civ=1):
         super().__init__()
         merge_dict = {
-            'gcgf': nn.Conv2d(2*in_feats, in_feats, kernel_size=1, padding=0, groups=in_feats, bias=True),
+            'gc1': nn.Conv2d(2*in_feats, in_feats, kernel_size=1, padding=0, groups=in_feats, bias=True),
+            'gc2': nn.Conv2d(2*in_feats, in_feats, kernel_size=1, padding=0, groups=in_feats, bias=False),
             'add': Add_Merge(in_feats),
             'cc3': CC3_Merge(in_feats),
             'la': LA_Merge(in_feats)
@@ -47,7 +48,7 @@ class General_Fuse_Block(nn.Module):
         if self.pre_bn:
             x = self.pre_bn1(x)
             y = self.pre_bn2(y)
-        if self.merge_mode != 'gcgf':
+        if 'gc' not in self.merge_mode:
             return self.merge(x, y)
         feats = torch.cat((x, y), dim=-2).reshape(b, 2*c, h, w)   # [b, c, 2h, w] => [b, 2c, h, w]
         return self.merge(feats)
@@ -201,6 +202,60 @@ class CA2b_Module(nn.Module):
         out = x * w_x.view(batch_size, ch, 1, 1) + y * w_y.view(batch_size, ch, 1, 1)
         return out, None, d
 
+class PSK_Module(nn.Module):
+    def __init__(self, in_feats, pp_size=(1, 2, 4, 8), descriptor=8, mid_feats=32, act_fn=None, sp='x'):
+        super().__init__()
+
+        print('sp = %s, pp = %s, dd = %d, m = %d, act = %s.' % (sp, pp_size, descriptor, mid_feats, act_fn))
+        self.sp = sp
+        self.pp_size = pp_size
+        self.feats_size = sum([(s ** 2) for s in self.pp_size])
+        self.descriptor = descriptor
+        self.act_fn = act_fn
+
+        self.des = nn.Conv2d(self.feats_size, self.descriptor, kernel_size=1)
+        self.fc = nn.Sequential(nn.Linear(in_feats * descriptor, mid_feats, bias=False),
+                                nn.BatchNorm1d(mid_feats),
+                                nn.ReLU(inplace=True))
+
+        self.fc_x = nn.Linear(mid_feats, in_feats)
+        self.fc_y = nn.Linear(mid_feats, in_feats)
+        if act_fn in ('sigmoid', 'sig'):
+            self.act_x = nn.Sigmoid()
+            self.act_y = nn.Sigmoid()
+        elif act_fn in ('rsigmoid', 'rsig'):
+            self.act_x = nn.Sequential(nn.ReLU(inplace=True), nn.Sigmoid())
+            self.act_y = nn.Sequential(nn.ReLU(inplace=True), nn.Sigmoid())
+        elif act_fn in ('softmax', 'soft'):
+            self.act = nn.Softmax(dim=1)
+
+    def forward(self, x, y):
+        U = x + y
+        batch_size, ch, _, _ = x.size()
+
+        pooling_pyramid = []
+        for s in self.pp_size:
+            pooling_pyramid.append(F.adaptive_avg_pool2d(x if (self.sp == 'x') else U, s).view(batch_size, ch, 1, -1))  # [b, c, 1, s^2]
+        z = torch.cat(tuple(pooling_pyramid), dim=-1)           # [b, c, 1, f]
+        z = z.reshape(batch_size * ch, -1, 1, 1)                # [bc, f, 1, 1]
+        z = self.des(z).view(batch_size, ch * self.descriptor)  # [bc, d, 1, 1] => [b, cd]
+        z = self.fc(z)      # [b, m]
+
+        z_x = self.fc_x(z)  # [b, c]
+        z_y = self.fc_y(z)  # [b, c]
+        if self.act_fn in ['sigmoid','rsigmoid', 'sig', 'rsig']:
+            w_x = self.act_x(z_x)  # [b, c]
+            w_y = self.act_y(z_y)  # [b, c]
+        elif self.act_fn in ['softmax', 'soft']:
+            w_xy = torch.cat((z_x, z_y), dim=1)  # [b, 2c]
+            w_xy = w_xy.view(batch_size, 2, ch)  # [b, 2, c]
+            w_xy = self.act(w_xy)                # [b, 2, c]
+            w_x, w_y = w_xy[:, 0].contiguous(), w_xy[:, 1].contiguous()  # [b, c]
+        rf_x = x * w_x.view(batch_size, ch, 1, 1)
+        rf_y = y * w_y.view(batch_size, ch, 1, 1)
+        out = rf_x + rf_y
+        return out, rf_x, rf_y 
+
 class Merge_Module(nn.Module):
     def __init__(self, in_feats, fuse_setting={}, att_module='idt', att_setting={}):
         super().__init__()
@@ -335,5 +390,6 @@ FUSE_MODULE_DICT = {
     'fuse': Fuse_Module,
     'ca2b': CA2b_Module,
     'ca6': CA6_Module,
-    'pa0': PA0_Module
+    'pa0': PA0_Module,
+    'psk': PSK_Module
 }

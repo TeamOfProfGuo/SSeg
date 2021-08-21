@@ -7,11 +7,12 @@ from .apnb import APNB
 from .fuse import FUSE_MODULE_DICT
 
 class Decoder(nn.Module):
-    def __init__(self, n_classes, feats='x', aux=False, final_fuse='none', lf_args={}, final_args={}):
+    def __init__(self, n_classes, feats='x', aux=False, final_aux=False, final_fuse='none', lf_args={}, final_args={}):
         super().__init__()
 
         self.aux = aux
         self.feats = feats
+        self.final_aux = final_aux and aux
         self.final_fuse = final_fuse and aux
         
         decoder_feats = [256, 128, 64]
@@ -66,7 +67,10 @@ class Decoder(nn.Module):
             feats = self.refine2(feats, f1)
             # Output
             aux3 = self.out_conv(feats)
-            out_feats = [self.out_up(aux3), aux3, self.aux2(aux2), self.aux1(aux1), self.aux0(aux0)]
+            if self.final_aux:
+                out_feats = [self.out_up(aux3), aux3, self.aux2(aux2), self.aux1(aux1), self.aux0(aux0)]
+            else:
+                out_feats = [self.out_up(aux3), self.aux2(aux2), self.aux1(aux1), self.aux0(aux0)]
             return out_feats
         else:
             feats = self.refine0(self.up0(f4), f3)

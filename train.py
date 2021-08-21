@@ -7,7 +7,7 @@
 import os
 import sys
 import time
-import yaml
+import pickle
 import numpy as np
 from addict import Dict
 
@@ -20,7 +20,7 @@ import torchvision.transforms as transform
 # Default Work Dir: /scratch/[NetID]/SSeg/
 BASE_DIR = os.getcwd()
 sys.path.append(BASE_DIR)
-# CONFIG_PATH = './config/%s.yaml' % sys.argv[1]
+# config: sys.argv[1]
 SMY_PATH = os.path.join('./results/', sys.argv[1][:sys.argv[1].find('_')], sys.argv[1])
 # GPU ids (only when there are multiple GPUs)
 GPUS = [0, 1]
@@ -101,17 +101,41 @@ class Trainer():
             self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
                                             {'params': other_params, 'lr': args.lr * 10}],
                                             lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        elif args.lr_setting == 'final_v1':
+            enc = model.encoder.encoder
+            base_modules = [
+                enc.rgb_base,
+                enc.dep_layer1,
+                enc.dep_layer2,
+                enc.dep_layer3,
+                enc.dep_layer4
+            ]
+            base_ids = utils.get_param_ids(base_modules)
+            base_params = filter(lambda p: id(p) in base_ids, model.parameters())
+            other_params = filter(lambda p: id(p) not in base_ids, model.parameters())
+            self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
+                                            {'params': other_params, 'lr': args.lr * 10}],
+                                            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        elif args.lr_setting == 'final_v2':
+            enc = model.encoder.encoder
+            base_modules = [enc.rgb_base, enc.dep_base]
+            base_ids = utils.get_param_ids(base_modules)
+            base_params = filter(lambda p: id(p) in base_ids, model.parameters())
+            other_params = filter(lambda p: id(p) not in base_ids, model.parameters())
+            self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
+                                            {'params': other_params, 'lr': args.lr * 10}],
+                                            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
         else:
             raise ValueError('Invalid lr_setting: %s.' % args.lr_setting)
 
-        # criterions
-        self.criterion = SegmentationLoss(se_loss=args.se_loss,
-                                          aux=self.config.decoder_args.aux,
-                                          nclass=self.nclass,
-                                          se_weight=args.se_weight,
-                                          aux_weight=args.aux_weight)
         # lr scheduler
-        self.scheduler = utils.LR_Scheduler_Head(args.lr_scheduler, args.lr, args.epochs, len(self.trainloader))
+        self.scheduler = utils.LR_Scheduler_Head(
+            mode=args.lr_scheduler,
+            base_lr=args.lr,
+            num_epochs=args.epochs,
+            iters_per_epoch=len(self.trainloader),
+            warmup_epochs=5
+        )
         self.best_pred = (0.0, 0.0)
 
         # using cuda
@@ -124,6 +148,23 @@ class Trainer():
             else:
                 self.multi_gpu = False
         self.model = model.to(self.device)
+
+        # init class weight
+        class_wt = None
+        if args.class_weight is not None:
+            fname = 'wt%d.pickle' % args.class_weight
+            with open(os.path.join(sys.argv[2], 'nyud_tmp/weight', fname), 'rb') as handle:
+                wt = pickle.load(handle)
+            class_wt = torch.FloatTensor(wt).to(self.device)
+        print('class weight = %d.' % args.class_weight)
+
+        # criterions
+        self.criterion = SegmentationLoss(
+            aux=self.config.decoder_args.aux,
+            aux_weight=args.aux_weight,
+            nclass=self.nclass,
+            weight=class_wt
+        )
 
         # for writing summary
         if not os.path.isdir(SMY_PATH):
@@ -187,6 +228,8 @@ class Trainer():
         print('epoch {}, pixel Acc {}, mean IOU {}'.format(epoch + 1, pixAcc, mIOU))
         self.writer.add_scalar("mean_iou/train", mIOU, epoch)
         self.writer.add_scalar("pixel accuracy/train", pixAcc, epoch)
+        self.writer.add_scalar('check_info/base_lr0', self.optimizer.param_groups[0]['lr'], epoch)
+        self.writer.add_scalar('check_info/other_lr1', self.optimizer.param_groups[1]['lr'], epoch)
 
     def train_n_evaluate(self):
 
@@ -286,8 +329,8 @@ if __name__ == "__main__":
     if len(sys.argv) > 3:
         print('debugging mode...')
         args.training.workers = 1
-        args.training.batch_size = 1
-        args.training.test_batch_size = 1
+        args.training.batch_size = 2
+        args.training.test_batch_size = 2
 
     trainer = Trainer(args)
     print('Starting Epoch:', trainer.config.training.start_epoch)

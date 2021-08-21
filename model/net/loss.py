@@ -19,9 +19,8 @@ class SegmentationLoss(nn.CrossEntropyLoss):
     def forward(self, *inputs):
         assert self.se_loss == False
         if self.aux:
-            out_feats, aux3, aux2, aux1, aux0, target = tuple(inputs)
-            # print(out_feats.size(), aux2.size(), aux1.size(), aux0.size(), target.size())
-            aux_feats, aux_loss = [aux3, aux2, aux1, aux0], []
+            out_feats, target = inputs[0], inputs[-1]
+            aux_feats, aux_loss = inputs[1:-1], []
             for aux in aux_feats:
                 _, _, h, w = aux.size()
                 aux_target = F.interpolate(target.unsqueeze(1).float(), size=(h, w)).long().squeeze(1)
