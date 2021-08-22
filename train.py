@@ -125,6 +125,15 @@ class Trainer():
             self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
                                             {'params': other_params, 'lr': args.lr * 10}],
                                             lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        elif args.lr_setting == 'final_v3':
+            enc = model.encoder.encoder
+            base_modules = [enc.rgb_base]
+            base_ids = utils.get_param_ids(base_modules)
+            base_params = filter(lambda p: id(p) in base_ids, model.parameters())
+            other_params = filter(lambda p: id(p) not in base_ids, model.parameters())
+            self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
+                                            {'params': other_params, 'lr': args.lr * 10}],
+                                            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
         else:
             raise ValueError('Invalid lr_setting: %s.' % args.lr_setting)
 

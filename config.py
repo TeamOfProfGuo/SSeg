@@ -5,8 +5,8 @@ from copy import deepcopy
 def get_config(exp_id):
     date, mode, idx = tuple(exp_id.split('_'))
     config = build_config(TEMPLATE, idx)
-    if date.find('0821') != -1:
-        config.training.lr_setting = 'final_v1' if (mode[0] == '1') else 'final_v2'
+    if (date.find('0821') != -1) or (date.find('0822') != -1):
+        config.training.lr_setting = 'final_v%s' % mode[0]
         config.decoder_args.final_aux = (mode[1] == 't')
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
@@ -102,20 +102,33 @@ DECODER_ARGS = {
 
 FUSE_ARGS = {
     # PSK (mmf only)
+    '0': {
+        'sp': 'x',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid'
+    },
     '1': {
         'sp': 'x',
         'act_fn': 'sigmoid'
     },
     '2': {
-        'sp': 'U',
+        'sp': 'u',
         'act_fn': 'sigmoid'
     },
     '3': {
+        'sp': 'y',
+        'act_fn': 'sigmoid'
+    },
+    '4': {
         'sp': 'x',
         'act_fn': 'softmax'
     },
-    '4': {
-        'sp': 'U',
+    '5': {
+        'sp': 'u',
+        'act_fn': 'softmax'
+    },
+    '6': {
+        'sp': 'y',
         'act_fn': 'softmax'
     },
     # GF (4)

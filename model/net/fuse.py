@@ -232,10 +232,11 @@ class PSK_Module(nn.Module):
     def forward(self, x, y):
         U = x + y
         batch_size, ch, _, _ = x.size()
+        sp_dict = {'x': x, 'y': y, 'u': U}
 
         pooling_pyramid = []
         for s in self.pp_size:
-            pooling_pyramid.append(F.adaptive_avg_pool2d(x if (self.sp == 'x') else U, s).view(batch_size, ch, 1, -1))  # [b, c, 1, s^2]
+            pooling_pyramid.append(F.adaptive_avg_pool2d(sp_dict[self.sp], s).view(batch_size, ch, 1, -1))  # [b, c, 1, s^2]
         z = torch.cat(tuple(pooling_pyramid), dim=-1)           # [b, c, 1, f]
         z = z.reshape(batch_size * ch, -1, 1, 1)                # [bc, f, 1, 1]
         z = self.des(z).view(batch_size, ch * self.descriptor)  # [bc, d, 1, 1] => [b, cd]
