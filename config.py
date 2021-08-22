@@ -102,6 +102,21 @@ DECODER_ARGS = {
 
 FUSE_ARGS = {
     # PSK (mmf only)
+    'x': {
+        'sp': 'x',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid'
+    },
+    'y': {
+        'sp': 'y',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid'
+    },
+    'z': {
+        'sp': 'u',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid'
+    },
     '0': {
         'sp': 'x',
         'mid_feats': 16,
