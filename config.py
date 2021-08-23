@@ -13,6 +13,8 @@ def get_config(exp_id):
         config.training.dataset = dataset_dict[mode[0]]
         config.training.lr_setting = 'final_v2'
         config.decoder_args.final_aux = False
+        if len(mode) > 1:
+            config.training.epochs = int(mode[1]) * 100
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
     return config
