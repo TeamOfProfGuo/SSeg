@@ -82,25 +82,6 @@ class Trainer():
                                             {'params': model.encoder.encoder.dep_base.parameters(), 'lr': args.lr},
                                             {'params': other_params, 'lr': args.lr * 10}],
                                             lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-        elif args.lr_setting == 'same-2b':
-            # optimizer using different LR
-            base_ids = list(map(id, model.encoder.encoder.rgb_base.parameters())) + list(map(id, model.encoder.encoder.dep_base.parameters()))
-            base_params = filter(lambda p: id(p) in base_ids, model.parameters())
-            other_params = filter(lambda p: id(p) not in base_ids, model.parameters())
-            self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
-                                            {'params': other_params, 'lr': args.lr * 10}],
-                                            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-        elif args.lr_setting == 'same-3b':
-            # optimizer using different LR
-            rgb_ids = list(map(id, model.encoder.encoder.rgb_base.parameters()))
-            dep_ids = list(map(id, model.encoder.encoder.dep_base.parameters()))
-            mer_ids = list(map(id, model.encoder.encoder.mer_base.parameters()))
-            base_ids = rgb_ids + dep_ids + mer_ids
-            base_params = filter(lambda p: id(p) in base_ids, model.parameters())
-            other_params = filter(lambda p: id(p) not in base_ids, model.parameters())
-            self.optimizer = torch.optim.SGD([{'params': base_params, 'lr': args.lr},
-                                            {'params': other_params, 'lr': args.lr * 10}],
-                                            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
         elif args.lr_setting == 'final_v1':
             enc = model.encoder.encoder
             base_modules = [
@@ -160,9 +141,14 @@ class Trainer():
 
         # init class weight
         class_wt = None
+        wt_dict = {
+            'nyud': 'nyud_tmp/weight',
+            'nyud_tmp': 'nyud_tmp/weight',
+            'sunrgbd': 'sunrgbd/weight'
+        }
         if args.class_weight is not None:
             fname = 'wt%d.pickle' % args.class_weight
-            with open(os.path.join(sys.argv[2], 'nyud_tmp/weight', fname), 'rb') as handle:
+            with open(os.path.join(sys.argv[2], wt_dict[args.dataset], fname), 'rb') as handle:
                 wt = pickle.load(handle)
             class_wt = torch.FloatTensor(wt).to(self.device)
         print('class weight = %d.' % args.class_weight)
@@ -276,7 +262,9 @@ class Trainer():
         print(final_result)
         
         # Export weights if needed
-        if self.args.export:
+        nyu_flag = (args.dataset == 'nyud' and final_miou > 0.49)
+        sun_flag = (args.dataset == 'sunrgbd' and final_miou > 0.47)
+        if self.args.export or nyu_flag or sun_flag:
             export_info = '/%s_%s_%s' % (self.args.model, self.args.dataset, int(time.time()))
             torch.save(best_state_dict, SMY_PATH + export_info + '.pth')
             with open(SMY_PATH + export_info + '.txt', 'w') as f:

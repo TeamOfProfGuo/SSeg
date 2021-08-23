@@ -8,6 +8,11 @@ def get_config(exp_id):
     if (date.find('0821') != -1) or (date.find('0822') != -1):
         config.training.lr_setting = 'final_v%s' % mode[0]
         config.decoder_args.final_aux = (mode[1] == 't')
+    elif (date.find('0823') != -1):
+        dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
+        config.training.dataset = dataset_dict[mode[0]]
+        config.training.lr_setting = 'final_v2'
+        config.decoder_args.final_aux = False
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
     return config
