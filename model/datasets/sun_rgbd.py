@@ -36,18 +36,14 @@ class SUNRBDBase:
                     (170, 0, 59), (255, 0, 0), (193, 195, 234), (70, 72, 115),
                     (255, 255, 0), (52, 57, 131), (12, 83, 45)]
 
-    CWD = os.getcwd()
-    if os.path.dirname(CWD).endswith('experiments'):
-        BASE_DIR = '../../../dataset/sunrgbd'
-    else:
-        BASE_DIR = '../dataset/sunrgbd/'
-
-
 class SUNRGBD(SUNRBDBase, BaseDataset):
     def __init__(self, root='./encoding/data', split='train', mode='train', transform=None,
                  dep_transform=None, target_transform=None, depth_mode='refined', with_input_orig=False, **kwargs):
         # depth_mode = 'refined'
         super(SUNRGBD, self).__init__(root, split, mode, transform, target_transform, **kwargs)
+        
+        self.BASE_DIR = os.path.join(root, 'sunrgbd')
+        
         self.dep_transform = dep_transform
         print('==check dep_transform {}'.format(dep_transform))
 

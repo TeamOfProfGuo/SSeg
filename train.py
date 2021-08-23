@@ -68,6 +68,8 @@ class Trainer():
         kwargs = {'num_workers': args.workers, 'pin_memory': True} if args.cuda else {}
         self.trainloader = data.DataLoader(trainset, batch_size=args.batch_size, drop_last=True, shuffle=True, **kwargs)
         self.valloader = data.DataLoader(testset, batch_size=args.batch_size, drop_last=False, shuffle=False, **kwargs)
+        self.train_step = len(self.trainloader) // 4
+        self.val_step = len(self.valloader) // 4
         self.nclass = trainset.num_class
 
         # model and params
@@ -151,7 +153,7 @@ class Trainer():
             with open(os.path.join(sys.argv[2], wt_dict[args.dataset], fname), 'rb') as handle:
                 wt = pickle.load(handle)
             class_wt = torch.FloatTensor(wt).to(self.device)
-        print('class weight = %d.' % args.class_weight)
+        print('class weight = %s(%d).' % (wt_dict[args.dataset], args.class_weight))
 
         # criterions
         self.criterion = SegmentationLoss(
@@ -213,7 +215,7 @@ class Trainer():
             total_union += union
             train_loss += loss.item()
 
-            if (i+1) % 50 == 0:
+            if (i+1) % self.train_step == 0:
                 print('epoch {}, step {}, loss {}'.format(epoch + 1, i + 1, train_loss / 50))
                 self.writer.add_scalar('train_loss', train_loss / 50, epoch * len(self.trainloader) + i)
                 train_loss = 0.0
@@ -304,7 +306,7 @@ class Trainer():
             IOU = 1.0 * total_inter / (np.spacing(1) + total_union)
             mIOU = IOU.mean()
 
-            if i % 20 == 0:
+            if i % self.val_step == 0:
                 print('eval mean IOU {}'.format(mIOU))
             loss = total_loss / len(self.valloader)
 
