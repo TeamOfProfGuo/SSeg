@@ -18,6 +18,8 @@ def archive_log(dst_dir = './results/', log_dir = './'):
                 if os.path.isfile(log_path) and os.path.isdir(dst_path) and end_flag:
                     move(log_path, dst_path)
                     print('Exp [%s] archived.' % exp)
+                else:
+                    print('Exp [%s] skipped.' % exp)
             else:
                 if end_flag:
                     print(dst_path)

@@ -264,8 +264,9 @@ class Trainer():
         print(final_result)
         
         # Export weights if needed
-        nyu_flag = (args.dataset == 'nyud' and final_miou > 0.49)
-        sun_flag = (args.dataset == 'sunrgbd' and final_miou > 0.47)
+        nyu_flag = (self.args.dataset == 'nyud' and final_miou > 0.49)
+        sun_flag = (self.args.dataset == 'sunrgbd' and final_miou > 0.47)
+        print(nyu_flag, sun_flag, self.args.dataset, final_miou)
         if self.args.export or nyu_flag or sun_flag:
             export_info = '/%s_%s_%s' % (self.args.model, self.args.dataset, int(time.time()))
             torch.save(best_state_dict, SMY_PATH + export_info + '.pth')

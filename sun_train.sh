@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20GB
-#SBATCH --time=167:59:59
+#SBATCH --time=47:59:59
 #SBATCH --gres=gpu
 
 #GREENE GREENE_GPU_MPS=yes

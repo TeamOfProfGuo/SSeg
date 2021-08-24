@@ -8,13 +8,27 @@ def get_config(exp_id):
     if (date.find('0821') != -1) or (date.find('0822') != -1):
         config.training.lr_setting = 'final_v%s' % mode[0]
         config.decoder_args.final_aux = (mode[1] == 't')
-    elif (date.find('0823') != -1):
+    elif (date.find('0823') != -1) or (date.find('0824') != -1):
         dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
         config.training.dataset = dataset_dict[mode[0]]
         config.training.lr_setting = 'final_v2'
         config.decoder_args.final_aux = False
-        if len(mode) > 1:
+        if len(mode) == 1:
+            pass
+        elif len(mode) == 2:
             config.training.epochs = int(mode[1]) * 100
+        elif len(mode) > 2:
+            config.training.epochs = int(mode[1]) * 100
+            config.training.lr = int(mode[2]) * 0.001
+            config.training.aux_weight = int(mode[3]) * 0.1
+        else:
+            raise ValueError('Invalid mode: %s.' % mode)
+    elif date == 'test':
+        dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
+        config.training.dataset = dataset_dict[mode[0]]
+        config.training.lr_setting = 'final_v2'
+        config.training.epochs = 3
+        config.decoder_args.final_aux = False
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
     return config
