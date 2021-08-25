@@ -268,7 +268,7 @@ class Trainer():
         sun_flag = (self.args.dataset == 'sunrgbd' and final_miou > 0.47)
         print(nyu_flag, sun_flag, self.args.dataset, final_miou)
         if self.args.export or nyu_flag or sun_flag:
-            export_info = '/%s_%s_%s' % (self.args.model, self.args.dataset, int(time.time()))
+            export_info = '/%s_%s_%s' % (sys.argv[1], self.args.dataset, int(time.time()))
             torch.save(best_state_dict, SMY_PATH + export_info + '.pth')
             with open(SMY_PATH + export_info + '.txt', 'w') as f:
                 f.write(str(self.config) + '\n')

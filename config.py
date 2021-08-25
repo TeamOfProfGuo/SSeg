@@ -5,10 +5,10 @@ from copy import deepcopy
 def get_config(exp_id):
     date, mode, idx = tuple(exp_id.split('_'))
     config = build_config(TEMPLATE, idx)
-    if (date.find('0821') != -1) or (date.find('0822') != -1):
+    if date in ('0821', '0822'):
         config.training.lr_setting = 'final_v%s' % mode[0]
         config.decoder_args.final_aux = (mode[1] == 't')
-    elif (date.find('0823') != -1) or (date.find('0824') != -1):
+    elif date in ('0823', '0824', '0825'):
         dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
         config.training.dataset = dataset_dict[mode[0]]
         config.training.lr_setting = 'final_v2'
@@ -23,7 +23,7 @@ def get_config(exp_id):
             config.training.aux_weight = int(mode[3]) * 0.1
         else:
             raise ValueError('Invalid mode: %s.' % mode)
-    elif date == 'test':
+    elif date in ('test', 'TBD'):
         dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
         config.training.dataset = dataset_dict[mode[0]]
         config.training.lr_setting = 'final_v2'
