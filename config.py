@@ -8,7 +8,7 @@ def get_config(exp_id):
     if date in ('0821', '0822'):
         config.training.lr_setting = 'final_v%s' % mode[0]
         config.decoder_args.final_aux = (mode[1] == 't')
-    elif date in ('0823', '0824', '0825'):
+    elif date in ('0823', '0824', '0825', '0826'):
         dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
         config.training.dataset = dataset_dict[mode[0]]
         config.training.lr_setting = 'final_v2'
@@ -19,7 +19,12 @@ def get_config(exp_id):
             config.training.epochs = int(mode[1]) * 100
         elif len(mode) > 2:
             encoder_dict = {'b': '2b', 'c': '2c'}
-            config.training.epochs = int(mode[1]) * 100
+            epoch_dict = {
+                '0':  80, '1': 100, 'a': 150, 
+                '2': 200, 'b': 250, '3': 300,
+                '4': 400, '5': 500, '6': 600
+            }
+            config.training.epochs = epoch_dict[mode[1]]
             config.training.lr = round(int(mode[2]) * 0.001, 3)
             config.training.aux_weight = round(int(mode[3]) * 0.1, 1)
             config.general.encoder = encoder_dict[mode[4]]
