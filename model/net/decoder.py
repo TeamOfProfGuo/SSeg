@@ -7,7 +7,7 @@ from .apnb import APNB
 from .fuse import FUSE_MODULE_DICT
 
 class Decoder(nn.Module):
-    def __init__(self, n_classes, feats='x', aux=False, final_aux=False, final_fuse='none', lf_args={}, final_args={}):
+    def __init__(self, n_classes, fuse_feats, feats='x', aux=False, final_aux=False, final_fuse='none', lf_args={}, final_args={}):
         super().__init__()
 
         self.aux = aux
@@ -15,7 +15,7 @@ class Decoder(nn.Module):
         self.final_aux = final_aux and aux
         self.final_fuse = final_fuse and aux
         
-        decoder_feats = [256, 128, 64]
+        decoder_feats = fuse_feats[-2:0:-1]
 
         # Refine Blocks
         for i in range(len(decoder_feats)):

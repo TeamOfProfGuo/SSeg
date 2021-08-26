@@ -5,8 +5,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
+from .resnet import resnet50
+
 # Backbone
-def get_resnet18(pretrained=True, input_dim = 3, f_path='./model/utils/resnet18-5c106cde.pth'):
+def get_resnet18(pretrained=True, input_dim=3, f_path='./model/utils/resnet18-5c106cde.pth'):
     assert input_dim in (1, 3, 4)
     model = models.resnet18(pretrained=False)
 
@@ -22,6 +24,36 @@ def get_resnet18(pretrained=True, input_dim = 3, f_path='./model/utils/resnet18-
                 weights[k] = v.data
             conv1_ori = weights['conv1.weight']
             conv1_new = torch.zeros((64, input_dim, 7, 7), dtype=torch.float32)
+            if input_dim == 4:
+                conv1_new[:, :3, :, :] = conv1_ori
+                conv1_new[:,  3, :, :] = conv1_ori[:,  1, :, :]
+            else:
+                conv1_new[:,  0, :, :] = conv1_ori[:,  1, :, :]
+            weights['conv1.weight'] = conv1_new
+            model.load_state_dict(weights, strict=False)
+        else:
+            model.load_state_dict(torch.load(f_path), strict=False)
+    else:
+        raise ValueError('Please use pretrained resnet18.')
+    
+    return model
+
+def get_resnet50(pretrained=True, input_dim=3, f_path='./model/utils/resnet50_v2.pth'):
+    assert input_dim in (1, 3, 4)
+    model = resnet50(pretrained=False)
+
+    if pretrained:
+        # Check weights file
+        if not os.path.exists(f_path):
+            raise FileNotFoundError('The pretrained model cannot be found.')
+        
+        if input_dim != 3:
+            model.conv1 = nn.Conv2d(input_dim, 64, kernel_size=3, stride=2, padding=1, bias=False)
+            weights = torch.load(f_path)
+            for k, v in weights.items():
+                weights[k] = v.data
+            conv1_ori = weights['conv1.weight']
+            conv1_new = torch.zeros((64, input_dim, 3, 3), dtype=torch.float32)
             if input_dim == 4:
                 conv1_new[:, :3, :, :] = conv1_ori
                 conv1_new[:,  3, :, :] = conv1_ori[:,  1, :, :]

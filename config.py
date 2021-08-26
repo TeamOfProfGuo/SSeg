@@ -18,9 +18,11 @@ def get_config(exp_id):
         elif len(mode) == 2:
             config.training.epochs = int(mode[1]) * 100
         elif len(mode) > 2:
+            encoder_dict = {'b': '2b', 'c': '2c'}
             config.training.epochs = int(mode[1]) * 100
-            config.training.lr = int(mode[2]) * 0.001
-            config.training.aux_weight = int(mode[3]) * 0.1
+            config.training.lr = round(int(mode[2]) * 0.001, 3)
+            config.training.aux_weight = round(int(mode[3]) * 0.1, 1)
+            config.general.encoder = encoder_dict[mode[4]]
         else:
             raise ValueError('Invalid mode: %s.' % mode)
     elif date in ('test', 'TBD'):

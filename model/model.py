@@ -24,6 +24,7 @@ class Base_Net(nn.Module):
 
         self.decoder = Decoder(
             n_classes=n_classes,
+            fuse_feats=self.encoder.encoder.fuse_feats,
             feats=config.general.feats,
             aux=config.decoder_args.aux,
             final_aux=config.decoder_args.final_aux,
