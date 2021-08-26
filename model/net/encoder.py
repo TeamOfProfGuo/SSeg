@@ -122,9 +122,9 @@ class Res2b_Encoder(nn.Module):
             self.add_module('dep_layer%d' % i, self.dep_base.__getattr__('layer%d' % i))
         
         # Fuse Block
-        fuse_feats = [64, 64, 128, 256, 512]
-        for i in range(len(fuse_feats)):
-            self.add_module('fuse%d' % i, FUSE_MODULE_DICT[fuse_module](fuse_feats[i], **fuse_args))
+        self.fuse_feats = [64, 64, 128, 256, 512]
+        for i in range(len(self.fuse_feats)):
+            self.add_module('fuse%d' % i, FUSE_MODULE_DICT[fuse_module](self.fuse_feats[i], **fuse_args))
     
     def forward(self, l, d):
 

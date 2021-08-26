@@ -30,12 +30,16 @@ def get_config(exp_id):
             config.general.encoder = encoder_dict[mode[4]]
         else:
             raise ValueError('Invalid mode: %s.' % mode)
-    elif date in ('test', 'TBD'):
+    elif date == 'test':
         dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
         config.training.dataset = dataset_dict[mode[0]]
         config.training.lr_setting = 'final_v2'
         config.training.epochs = 3
         config.decoder_args.final_aux = False
+    elif date in ('nyud', 'sunrgbd'):
+        encoder_dict = {'b': '2b', 'c': '2c'}
+        config.training.dataset = date
+        config.general.encoder = encoder_dict[mode]
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
     return config
