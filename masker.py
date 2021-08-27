@@ -24,7 +24,7 @@ BASE_DIR = os.getcwd()
 sys.path.append(BASE_DIR)
 # config: sys.argv[1]
 MODEL_DIR = os.path.join(BASE_DIR, 'mask', sys.argv[1])
-OUTPUT_DIR = os.path.join(MODEL_DIR, 'pred')
+OUTPUT_DIR = os.path.join(MODEL_DIR, '%s_pred' % sys.argv[1])
 
 from model.model import get_basenet
 from model.datasets import get_dataset
@@ -61,10 +61,12 @@ class Masker():
             raise ValueError('Unable to transform depth on the selected dataset.')
         
         # dataset
+        # note: need to comment crop while loading (./model/datasets/base.py)
         data_kwargs = {'transform': input_transform, 'dep_transform': dep_transform,
                        'base_size': args.base_size, 'crop_size': args.crop_size}
         trainset = get_dataset(args.dataset, root=sys.argv[2], split=args.train_split, mode='train', **data_kwargs)
         testset = get_dataset(args.dataset, root=sys.argv[2], split='val', mode='val', **data_kwargs)
+        self.testset = testset
         # dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': True} if args.cuda else {}
         self.trainloader = data.DataLoader(trainset, batch_size=args.batch_size, drop_last=True, shuffle=True, **kwargs)
@@ -131,35 +133,72 @@ class Masker():
         return image_numpy.astype(imtype)
 
     def gen_mask(self):
+
+        with open(os.path.join(OUTPUT_DIR, 'colors.txt'), 'w') as f:
+            for i in range(self.nclass):
+                # print('%s %s' % (self.testset.classes[i], tuple(self.colors[i])))
+                f.write('%s|%s\n' % (self.testset.classes[i], self.colors[i]))
+
         self.model.eval()
         for i, (image, dep, target) in enumerate(self.valloader):
+
+            last_file = os.path.join(OUTPUT_DIR, 'comb_%03d.jpg' % (self.args.batch_size * (i+1) - 1))
+            if os.path.isfile(last_file):
+                print('Pred Step %03d skipped.' % i)
+                continue
+
             if self.args.cuda:
                 image, dep, target = image.to(self.device), dep.to(self.device), target.to(self.device)
             
             pred = torch.argmax(self.model(image, dep)[0], dim = 1)
-            for j in range(self.args.batch_size):
-                img = self.denormalize(image[j], mean=[.485, .456, .406], std=[.229, .224, .225])
-                dep_size = dep[j].size()
-                depth = self.denormalize(dep[j].expand(3, dep_size[1], dep_size[2]), mean=[0.2798], std=[0.1387])
-                part1 = np.concatenate((img, depth), axis = 1)
+            if self.args.cuda:
+                pred.cpu()
 
+            for j in range(self.args.batch_size):
+                curr_rgb = self.denormalize(image[j], mean=[.485, .456, .406], std=[.229, .224, .225])
+                dep_size = dep[j].size()
+                curr_dep = self.denormalize(dep[j].expand(3, dep_size[1], dep_size[2]), mean=[0.2798], std=[0.1387])
                 mask_gt = self.mask_to_rgb(target[j])
                 mask_pred = self.mask_to_rgb(pred[j])
+
+                part1 = np.concatenate((curr_rgb, curr_dep), axis = 1)
                 part2 = np.concatenate((mask_gt, mask_pred), axis = 1)
-
                 res = np.concatenate((part1, part2), axis = 0)
-                res_img = Image.fromarray(res)
-                res_img.save(os.path.join(OUTPUT_DIR, '%03d.jpg' % (self.args.batch_size * i + j)))
+                comb_path = os.path.join(OUTPUT_DIR, 'comb_%03d.jpg' % (self.args.batch_size * i + j))
+                img = Image.fromarray(res)
+                img.save(comb_path)
 
-            if (i+1) % 10 == 0:
-                print('Pred Step %d/%d' % (i+1, len(self.valloader)))
+                curr_dir = os.path.join(OUTPUT_DIR, '%03d' % (self.args.batch_size * i + j))
+                if not os.path.isdir(curr_dir):
+                    os.makedirs(curr_dir)
+                else:
+                    continue
+                
+                gt_path = os.path.join(curr_dir, 'gt.jpg')
+                img = Image.fromarray(mask_gt)
+                img.save(gt_path)
+
+                rgb_path = os.path.join(curr_dir, 'rgb.jpg')
+                img = Image.fromarray(curr_rgb)
+                img.save(rgb_path)
+
+                dep_path = os.path.join(curr_dir, 'dep.jpg')
+                img = Image.fromarray(curr_dep)
+                img.save(dep_path)
+
+                pred_path = os.path.join(curr_dir, 'pred_path.jpg')
+                img = Image.fromarray(mask_pred)
+                img.save(pred_path)
+
+                print('Pred Step %03d-%d' % (i, j))
 
 if __name__ == "__main__":
     print('[Model Info]:', sys.argv[1])
     print("-------mark program start----------")
     # configuration
     args = Dict(get_config(sys.argv[1]))
-    args.training.cuda = (args.training.use_cuda and torch.cuda.is_available())
+    # args.training.cuda = (args.training.use_cuda and torch.cuda.is_available())
+    args.training.cuda = False
     if len(sys.argv) > 3:
         print('debugging mode...')
         args.training.workers = 1
