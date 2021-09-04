@@ -8,11 +8,16 @@ def get_config(exp_id):
     if date in ('0821', '0822'):
         config.training.lr_setting = 'final_v%s' % mode[0]
         config.decoder_args.final_aux = (mode[1] == 't')
-    elif date in ('0823', '0824', '0825', '0826'):
+    elif date in ('0823', '0824', '0825', '0826', '0903'):
         dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
         config.training.dataset = dataset_dict[mode[0]]
         config.training.lr_setting = 'final_v2'
         config.decoder_args.final_aux = False
+        if date == '0903':
+            config.encoder_args.fuse_module = 'fuse'
+            config.training.export = True
+            config.training.class_weight = None
+            config.decoder_args.aux = False
         if len(mode) == 1:
             pass
         elif len(mode) == 2:
@@ -20,9 +25,8 @@ def get_config(exp_id):
         elif len(mode) > 2:
             encoder_dict = {'b': '2b', 'c': '2c'}
             epoch_dict = {
-                '0':  80, '1': 100, 'a': 150, 
-                '2': 200, 'b': 250, '3': 300,
-                '4': 400, '5': 500, '6': 600
+                't':  10, '0':  80, '1': 100, 'a': 150, '2': 200, 
+                'b': 250, '3': 300, '4': 400, '5': 500, '6': 600, 
             }
             config.training.epochs = epoch_dict[mode[1]]
             config.training.lr = round(int(mode[2]) * 0.001, 3)
@@ -68,7 +72,7 @@ TEMPLATE = {
         'early_fusion': False,
         'export': False,
         # Aux loss
-        'aux': True,
+        # 'aux': True,
         'aux_weight': 0.5,
         'class_weight': 1,
         # Training setting
@@ -197,6 +201,17 @@ FUSE_ARGS = {
             'civ': 0.5
         },
         'att_module': 'pdl',
+        'att_setting': {}
+    },
+    # simple add
+    'a': {
+        'fuse_setting': {
+            'pre_bn': False,
+            'merge': 'add',
+            'init': [False, False],
+            'civ': None
+        },
+        'att_module': 'idt',
         'att_setting': {}
     },
 }

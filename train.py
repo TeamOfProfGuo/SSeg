@@ -153,7 +153,7 @@ class Trainer():
             with open(os.path.join(sys.argv[2], wt_dict[args.dataset], fname), 'rb') as handle:
                 wt = pickle.load(handle)
             class_wt = torch.FloatTensor(wt).to(self.device)
-        print('class weight = %s(%d).' % (wt_dict[args.dataset], args.class_weight))
+        print('class weight = %s(%s).' % (wt_dict[args.dataset], args.class_weight))
 
         # criterions
         self.criterion = SegmentationLoss(

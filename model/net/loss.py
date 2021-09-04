@@ -29,7 +29,8 @@ class SegmentationLoss(nn.CrossEntropyLoss):
             loss2 = sum(aux_loss) / len(aux_loss)
             return loss1 + self.aux_weight * loss2
         else:
-            return super(SegmentationLoss, self).forward(*inputs)
+            out_feats, target = inputs[0], inputs[-1]
+            return super(SegmentationLoss, self).forward(out_feats, target)
 
     @staticmethod
     def _get_batch_label_vector(target, nclass):

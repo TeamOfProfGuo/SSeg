@@ -76,7 +76,9 @@ class Decoder(nn.Module):
             feats = self.refine0(self.up0(f4), f3)
             feats = self.refine1(self.up1(feats), f2)
             feats = self.refine2(self.up2(feats), f1)
-            return [self.out_conv(feats)]
+            feats = self.out_conv(feats)
+            out_feats = [self.out_up(feats)]
+            return out_feats
 
 class Level_Fuse_Module(nn.Module):
     def __init__(self, in_feats, conv_flag=(True, False), lf_bb='rbb[2->2]', fuse_args={}, fuse_module='fuse'):
