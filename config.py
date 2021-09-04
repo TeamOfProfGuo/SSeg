@@ -41,9 +41,12 @@ def get_config(exp_id):
         config.training.epochs = 3
         config.decoder_args.final_aux = False
     elif date in ('nyud', 'sunrgbd'):
-        encoder_dict = {'b': '2b', 'c': '2c'}
+        encoder_dict = {'a': '2b', 'b': '2b', 'c': '2c'}
         config.training.dataset = date
         config.general.encoder = encoder_dict[mode]
+        if mode == 'a':
+            config.encoder_args.fuse_module = 'fuse'
+            config.decoder_args.aux = False
     else:
         raise ValueError('Invalid Config ID: %s.' % exp_id)
     return config
