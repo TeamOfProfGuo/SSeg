@@ -8,7 +8,7 @@ def get_config(exp_id):
     if date in ('0821', '0822'):
         config.training.lr_setting = 'final_v%s' % mode[0]
         config.decoder_args.final_aux = (mode[1] == 't')
-    elif date in ('0823', '0824', '0825', '0826', '0903'):
+    elif date in ('0823', '0824', '0825', '0826', '0903', '0907'):
         dataset_dict = {'n': 'nyud', 's': 'sunrgbd'}
         config.training.dataset = dataset_dict[mode[0]]
         config.training.lr_setting = 'final_v2'
@@ -16,6 +16,9 @@ def get_config(exp_id):
         if date == '0903':
             config.encoder_args.fuse_module = 'fuse'
             config.training.export = True
+            config.training.class_weight = None
+            config.decoder_args.aux = False
+        if date == '0907':
             config.training.class_weight = None
             config.decoder_args.aux = False
         if len(mode) == 1:
@@ -156,34 +159,57 @@ FUSE_ARGS = {
         'mid_feats': 16,
         'act_fn': 'sigmoid'
     },
-    '0': {
-        'sp': 'x',
-        'mid_feats': 16,
-        'act_fn': 'sigmoid'
-    },
     '1': {
-        'sp': 'x',
-        'act_fn': 'sigmoid'
+        'sp': 'u',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid',
+        'pp_size': (1, )
     },
     '2': {
         'sp': 'u',
-        'act_fn': 'sigmoid'
+        'mid_feats': 16,
+        'act_fn': 'sigmoid',
+        'pp_size': (1, 2)
     },
     '3': {
-        'sp': 'y',
-        'act_fn': 'sigmoid'
+        'sp': 'u',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid',
+        'pp_size': (1, 2, 4)
     },
     '4': {
-        'sp': 'x',
-        'act_fn': 'softmax'
+        'sp': 'u',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid',
+        'pp_size': (1, 2, 4, 8)
     },
     '5': {
         'sp': 'u',
-        'act_fn': 'softmax'
+        'mid_feats': 16,
+        'act_fn': 'sigmoid',
+        'pp_size': (1, ),
+        'descriptor': -1
     },
     '6': {
-        'sp': 'y',
-        'act_fn': 'softmax'
+        'sp': 'u',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid',
+        'pp_size': (1, 2),
+        'descriptor': -1
+    },
+    '7': {
+        'sp': 'u',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid',
+        'pp_size': (1, 2, 4),
+        'descriptor': -1
+    },
+    '8': {
+        'sp': 'u',
+        'mid_feats': 16,
+        'act_fn': 'sigmoid',
+        'pp_size': (1, 2, 4, 8),
+        'descriptor': -1
     },
     # GF (4)
     'g': {
@@ -202,6 +228,16 @@ FUSE_ARGS = {
             'merge': 'gc2',
             'init': [False, True],
             'civ': 0.5
+        },
+        'att_module': 'pdl',
+        'att_setting': {}
+    },
+    'i': {
+        'fuse_setting': {
+            'pre_bn': False,
+            'merge': 'add',
+            'init': [False, False],
+            'civ': None
         },
         'att_module': 'pdl',
         'att_setting': {}

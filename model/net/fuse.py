@@ -213,10 +213,16 @@ class PSK_Module(nn.Module):
         self.descriptor = descriptor
         self.act_fn = act_fn
 
-        self.des = nn.Conv2d(self.feats_size, self.descriptor, kernel_size=1)
-        self.fc = nn.Sequential(nn.Linear(in_feats * descriptor, mid_feats, bias=False),
-                                nn.BatchNorm1d(mid_feats),
-                                nn.ReLU(inplace=True))
+        if (descriptor == -1) or (self.feats_size < descriptor):
+            self.des = nn.Identity()
+            self.fc = nn.Sequential(nn.Linear(in_feats * self.feats_size, mid_feats, bias=False),
+                                    nn.BatchNorm1d(mid_feats),
+                                    nn.ReLU(inplace=True))
+        else:
+            self.des = nn.Conv2d(self.feats_size, self.descriptor, kernel_size=1)
+            self.fc = nn.Sequential(nn.Linear(in_feats * descriptor, mid_feats, bias=False),
+                                    nn.BatchNorm1d(mid_feats),
+                                    nn.ReLU(inplace=True))
 
         self.fc_x = nn.Linear(mid_feats, in_feats)
         self.fc_y = nn.Linear(mid_feats, in_feats)
@@ -237,9 +243,9 @@ class PSK_Module(nn.Module):
         pooling_pyramid = []
         for s in self.pp_size:
             pooling_pyramid.append(F.adaptive_avg_pool2d(sp_dict[self.sp], s).view(batch_size, ch, 1, -1))  # [b, c, 1, s^2]
-        z = torch.cat(tuple(pooling_pyramid), dim=-1)           # [b, c, 1, f]
-        z = z.reshape(batch_size * ch, -1, 1, 1)                # [bc, f, 1, 1]
-        z = self.des(z).view(batch_size, ch * self.descriptor)  # [bc, d, 1, 1] => [b, cd]
+        z = torch.cat(tuple(pooling_pyramid), dim=-1)   # [b, c, 1, f]
+        z = z.reshape(batch_size * ch, -1, 1, 1)        # [bc, f, 1, 1]
+        z = self.des(z).view(batch_size, -1)            # [bc, d, 1, 1] => [b, cd]
         z = self.fc(z)      # [b, m]
 
         z_x = self.fc_x(z)  # [b, c]
